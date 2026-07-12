@@ -45,13 +45,20 @@ def ink(shade=0):
 def gen_layout(cols, rows):
     """Return a boolean floor mask [rows,cols] of rooms + connecting corridors."""
     floor = np.zeros((rows, cols), bool)
-    n_rooms = rndi(4, 9)
     centers = []
-    for _ in range(n_rooms):
-        rw, rh = rndi(2, max(2, cols // 3)), rndi(2, max(2, rows // 4))
-        cx, cy = rndi(1, cols - rw - 1), rndi(1, rows - rh - 1)
+    for _ in range(rndi(5, 13)):  # rectangular rooms (denser)
+        rw, rh = rndi(2, max(2, cols // 2)), rndi(2, max(2, rows // 3))
+        cx, cy = rndi(1, max(1, cols - rw - 1)), rndi(1, max(1, rows - rh - 1))
         floor[cy:cy + rh, cx:cx + rw] = True
         centers.append((cx + rw // 2, cy + rh // 2))
+    yy, xx = np.ogrid[:rows, :cols]
+    for _ in range(rndi(0, 2)):  # circular rooms (bro draws these)
+        rad = rndi(2, max(2, min(cols, rows) // 5))
+        if cols - rad - 1 <= rad + 1 or rows - rad - 1 <= rad + 1:
+            continue
+        cx, cy = rndi(rad + 1, cols - rad - 1), rndi(rad + 1, rows - rad - 1)
+        floor[(xx - cx) ** 2 + (yy - cy) ** 2 <= rad * rad] = True
+        centers.append((cx, cy))
     # connect consecutive room centers with L-shaped 1-cell corridors
     for i in range(1, len(centers)):
         (x0, y0), (x1, y1) = centers[i - 1], centers[i]
@@ -72,12 +79,12 @@ def draw_dot_grid(draw, W, H, D, ox, oy):
             x += D
         y += D
 
-def draw_map(floor, cell, ox, oy, D):
+def draw_map(floor, cell, ox, oy, D, pad_r, pad_b):
     rows, cols = floor.shape
-    W = ox + cols * cell + rndi(cell, 3 * cell)
-    H = oy + rows * cell + rndi(cell, 3 * cell)
-    # a couple hundred px margin so the page isn't edge-to-edge
-    W = int(W); H = int(H)
+    # variable margins → the grid occupies a varying fraction of the page, so the
+    # model learns to find the tight grid even when the drawing is small on the page
+    W = int(ox + cols * cell + pad_r)
+    H = int(oy + rows * cell + pad_b)
     paper = (rndi(230, 243), rndi(224, 238), rndi(205, 222))
     img = Image.new("RGB", (W, H), paper)
     dr = ImageDraw.Draw(img)
@@ -247,9 +254,13 @@ def one():
     k = rndi(2, 4)                    # dots per cell
     cell = D * k
     cols, rows = rndi(8, 20), rndi(10, 26)
-    ox, oy = rndi(D, 3 * D), rndi(D, 3 * D)
+    # variable page margins (in cells) around the grid — sometimes tight, sometimes lots of blank paper
+    ox = rndi(0, 5) * cell + rndi(D, 2 * D)
+    oy = rndi(0, 5) * cell + rndi(D, 2 * D)
+    pad_r = rndi(0, 6) * cell + rndi(D, 2 * D)
+    pad_b = rndi(0, 6) * cell + rndi(D, 2 * D)
     floor = gen_layout(cols, rows)
-    img, corners = draw_map(floor, cell, ox, oy, D)
+    img, corners = draw_map(floor, cell, ox, oy, D, pad_r, pad_b)
     out, corners = augment(img, corners)
     # normalize longest side to 1600 like the app
     W, H = out.size
