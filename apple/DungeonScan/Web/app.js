@@ -1350,7 +1350,7 @@
       const pal = $('stampPalette'), out = $('stampName');
       if (!pal || !out) return;
       pal.addEventListener('mouseover', (e) => { const b = e.target.closest && e.target.closest('.ds-stamp-btn'); if (b) { out.textContent = b.getAttribute('aria-label') || b.title || ''; out.classList.add('on'); } });
-      pal.addEventListener('mouseout', (e) => { const b = e.target.closest && e.target.closest('.ds-stamp-btn'); if (b) { out.textContent = ''; out.classList.remove('on'); } });
+      pal.addEventListener('mouseleave', () => { out.textContent = ''; out.classList.remove('on'); });
     })();
     $('btn-open').addEventListener('click', async () => { const r = await DSBridge.openImage(); if (r) loadUserPhoto(r.dataUrl, r.name); });
     $('drop').addEventListener('click', async () => { const r = await DSBridge.openImage(); if (r) loadUserPhoto(r.dataUrl, r.name); });
