@@ -46,8 +46,10 @@
           <div class="shead"><span class="n">1</span> Add your drawing</div>
           <div class="sbody">
             <button id="btn-open" class="primary wide" type="button" data-ic="image">Open a photo</button>
-            <div class="samples-label">No photo handy? Try a pretend one:</div>
-            <div id="samples" class="samples"></div>
+            <div id="samplesWrap">
+              <div class="samples-label"><span>Or start from an example:</span><button id="btn-hidesamples" class="linkbtn" type="button">Hide</button></div>
+              <div id="samples" class="samples"></div>
+            </div>
           </div>
         </li>
         <!-- step 2 -->
@@ -89,10 +91,11 @@
             <p class="hint" id="toolHint">Pick a tool, then click on the map. Walls snap to the grid lines.</p>
             <div class="symbols">
               <div class="symbols-head">Symbols</div>
-              <div class="symbols-hint">Scroll the list, then tap one to drop it on the map.</div>
+              <div class="symbols-hint">Scroll to see them all. Point at a symbol to read its name, then tap to place it.</div>
               <div class="stamp-scroll">
                 <div id="stampPalette" class="stamp-palette"></div>
               </div>
+              <div id="stampName" class="stamp-name" aria-live="polite"></div>
             </div>
           </div>
         </li>

@@ -53,6 +53,14 @@
     img.onerror = () => setStatus('Could not read that image — try a PNG or JPG.');
     img.src = dataUrl;
   }
+  // tiny persisted-preference store (localStorage; no-ops if unavailable)
+  function prefGet(k) { try { return localStorage.getItem('ds.' + k); } catch (_) { return null; } }
+  function prefSet(k, v) { try { localStorage.setItem('ds.' + k, v); } catch (_) {} }
+  // A real (user) photo load — counts toward retiring the example thumbnails.
+  function loadUserPhoto(dataUrl, name) {
+    prefSet('realLoads', String((+prefGet('realLoads') || 0) + 1));
+    loadDataUrl(dataUrl, name);
+  }
   // Ingest a dropped File — an image loads directly; a PDF (e.g. exported from a
   // drawing app) is rasterized to PNG by the native layer first.
   function ingestFile(f) {
@@ -63,10 +71,10 @@
       if (isPdf) {
         setStatus('Reading your PDF…');
         const png = await DSBridge.rasterizePdf(rd.result);
-        if (png) loadDataUrl(png, f.name);
+        if (png) loadUserPhoto(png, f.name);
         else setStatus('PDFs open inside the app — in a browser, export a PNG instead.');
       } else {
-        loadDataUrl(rd.result, f.name);
+        loadUserPhoto(rd.result, f.name);
       }
     };
     rd.readAsDataURL(f);
@@ -1318,6 +1326,10 @@
       d.addEventListener('click', () => loadDataUrl(sp.dataUrl, sp.name + ' (sample)'));
       el.appendChild(d);
     });
+    // retire the examples once the user clearly has the hang of it, or dismissed them
+    if (prefGet('hideSamples') === '1' || (+prefGet('realLoads') || 0) >= 3) {
+      const w = $('samplesWrap'); if (w) w.classList.add('hidden');
+    }
   }
 
   async function boot() {
@@ -1331,8 +1343,17 @@
     updateUndoRedoButtons();
     $('sensVal').textContent = sensLabel(S.lineSensitivity);
 
-    $('btn-open').addEventListener('click', async () => { const r = await DSBridge.openImage(); if (r) loadDataUrl(r.dataUrl, r.name); });
-    $('drop').addEventListener('click', async () => { const r = await DSBridge.openImage(); if (r) loadDataUrl(r.dataUrl, r.name); });
+    $('btn-hidesamples').addEventListener('click', () => { prefSet('hideSamples', '1'); const w = $('samplesWrap'); if (w) w.classList.add('hidden'); });
+    // symbol name readout: reading the hovered icon's label into a fixed spot is
+    // clearer (esp. low-vision) than relying on the native hover tooltip alone.
+    (function () {
+      const pal = $('stampPalette'), out = $('stampName');
+      if (!pal || !out) return;
+      pal.addEventListener('mouseover', (e) => { const b = e.target.closest && e.target.closest('.ds-stamp-btn'); if (b) { out.textContent = b.getAttribute('aria-label') || b.title || ''; out.classList.add('on'); } });
+      pal.addEventListener('mouseout', (e) => { const b = e.target.closest && e.target.closest('.ds-stamp-btn'); if (b) { out.textContent = ''; out.classList.remove('on'); } });
+    })();
+    $('btn-open').addEventListener('click', async () => { const r = await DSBridge.openImage(); if (r) loadUserPhoto(r.dataUrl, r.name); });
+    $('drop').addEventListener('click', async () => { const r = await DSBridge.openImage(); if (r) loadUserPhoto(r.dataUrl, r.name); });
     $('btn-auto').addEventListener('click', () => {
       if (S.mode === 'hex') {
         S.hexGrid = DS.hex.estimateHexGrid(S.gray, S.w, S.h); recomputeHexCR(); buildHexGridControls();
