@@ -50,7 +50,8 @@ ARCHIVE="$DD/DungeonScan.xcarchive"
 EXPORT_DIR="$DD/export"
 APP="$EXPORT_DIR/DungeonScan.app"
 DIST="../dist"                                # ~/DungeonScan/dist
-VERSION="$(/usr/libexec/PlistBuddy -c 'Print :MARKETING_VERSION' DungeonScan/Info.plist 2>/dev/null || echo 0.1.0)"
+# MARKETING_VERSION lives in project.yml (Info.plist only has the $(...) macro).
+VERSION="$(awk -F'"' '/MARKETING_VERSION:/{print $2; exit}' project.yml 2>/dev/null || echo 0.1.0)"
 
 APP_ONLY=0
 for a in "$@"; do [[ "$a" == "--app" ]] && APP_ONLY=1; done
