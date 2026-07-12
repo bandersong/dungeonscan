@@ -30,6 +30,7 @@
   var GREEN = { r: 86, g: 150, b: 72 };
   var BLUE = { r: 58, g: 116, b: 178 };
   var BROWN = { r: 122, g: 82, b: 46 };
+  var GREY = { r: 128, g: 128, b: 128 };
 
   function hexToRgb(hex) {
     hex = (hex || '#000').replace('#', '');
@@ -82,14 +83,14 @@
 
   // ---------- style palettes (void, floor, floorEdge, grid, wall, door) ----------
   var STYLES = {
-    stone:     { void: '#1b1e24', floor: '#d9ccb0', floorEdge: '#c7b78f', grid: 'rgba(60,50,30,0.20)',  wall: '#1b1e24', door: '#7a5230' },
-    blueprint: { void: '#0d2f52', floor: '#123a63', floorEdge: '#0f3157', grid: 'rgba(150,190,225,0.35)', wall: '#eaf3ff', door: '#8fb4dd' },
-    ink:       { void: '#f4f3ee', floor: '#ffffff', floorEdge: '#eceae3', grid: 'rgba(40,40,40,0.18)',   wall: '#161616', door: '#161616' },
-    parchment: { void: '#e3d3a8', floor: '#f2e6c4', floorEdge: '#ddc99a', grid: 'rgba(110,72,32,0.22)',  wall: '#5b3a1c', door: '#8a5a2b' },
-    cavern:    { void: '#1a1d22', floor: '#42474f', floorEdge: '#333840', grid: 'rgba(170,180,190,0.12)', wall: '#0a0c10', door: '#7a8088' },
-    classic:   { void: '#e9eef4', floor: '#ffffff', floorEdge: '#d7e2f0', grid: 'rgba(40,72,150,0.55)',  wall: '#1b2c61', door: '#1b2c61' },
-    handdrawn: { void: '#f3eede', floor: '#fbf7ea', floorEdge: '#ece4cc', grid: 'rgba(70,55,30,0.14)',   wall: '#211d14', door: '#211d14' },
-    scifi:     { void: '#070b10', floor: '#0f1a22', floorEdge: '#182835', grid: 'rgba(90,205,235,0.30)', wall: '#57d1e8', door: '#2e6f80' }
+    stone:     { void: '#1b1e24', floor: '#d9ccb0', floorEdge: '#c7b78f', grid: 'rgba(52,42,24,0.46)',  wall: '#1b1e24', door: '#7a5230' },
+    blueprint: { void: '#0d2f52', floor: '#123a63', floorEdge: '#0f3157', grid: 'rgba(170,205,235,0.52)', wall: '#eaf3ff', door: '#8fb4dd' },
+    ink:       { void: '#f4f3ee', floor: '#ffffff', floorEdge: '#eceae3', grid: 'rgba(34,34,34,0.42)',   wall: '#161616', door: '#161616' },
+    parchment: { void: '#e3d3a8', floor: '#f2e6c4', floorEdge: '#ddc99a', grid: 'rgba(102,66,28,0.46)',  wall: '#5b3a1c', door: '#8a5a2b' },
+    cavern:    { void: '#1a1d22', floor: '#42474f', floorEdge: '#333840', grid: 'rgba(188,198,208,0.48)', wall: '#0a0c10', door: '#7a8088' },
+    classic:   { void: '#e9eef4', floor: '#ffffff', floorEdge: '#d7e2f0', grid: 'rgba(40,72,150,0.60)',  wall: '#1b2c61', door: '#1b2c61' },
+    handdrawn: { void: '#f3eede', floor: '#fbf7ea', floorEdge: '#ece4cc', grid: 'rgba(58,46,26,0.42)',   wall: '#211d14', door: '#211d14' },
+    scifi:     { void: '#070b10', floor: '#0f1a22', floorEdge: '#182835', grid: 'rgba(96,212,240,0.50)', wall: '#57d1e8', door: '#2e6f80' }
   };
 
   // ---------- floor textures (drawn INSIDE floor cells only) ----------
@@ -191,6 +192,165 @@
     }
   }
 
+  // ---------- extra floor textures (procedural, mid-tone so the grid stays legible) ----------
+  function drawDirt(ctx, x, y, ppg, base, cellSeed) {
+    var rng = mulberry32(cellSeed);
+    var earth = tint(base, BROWN, 0.18);
+    ctx.fillStyle = rgbCss(earth); ctx.fillRect(x, y, ppg, ppg);
+    var dark = tint(earth, BLACK, 0.18), light = tint(earth, WHITE, 0.16);
+    var specks = 10 + Math.floor(rng() * 7);
+    var sr = Math.max(0.6, ppg * 0.012);
+    ctx.lineWidth = Math.max(1, ppg * 0.02); ctx.lineCap = 'round';
+    for (var i = 0; i < specks; i++) {
+      var sx = x + rng() * ppg, sy = y + rng() * ppg;
+      ctx.fillStyle = rgbCss(rng() < 0.5 ? dark : light, 0.3 + rng() * 0.2);
+      ctx.beginPath(); ctx.arc(sx, sy, sr, 0, Math.PI * 2); ctx.fill();
+    }
+    var pebbles = 2 + Math.floor(rng() * 3);
+    for (var j = 0; j < pebbles; j++) {
+      var px = x + ppg * 0.15 + rng() * ppg * 0.7;
+      var py = y + ppg * 0.15 + rng() * ppg * 0.7;
+      var pw = ppg * 0.06 + rng() * ppg * 0.05;
+      var ph = pw * (0.7 + rng() * 0.4);
+      ctx.fillStyle = rgbCss(rng() < 0.5 ? dark : light, 0.4);
+      ctx.beginPath();
+      ctx.ellipse(px, py, pw, ph, rng() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawSand(ctx, x, y, ppg, base, cellSeed) {
+    var rng = mulberry32(cellSeed);
+    var sand = shade(tint(base, BROWN, 0.10), 0.10);
+    ctx.fillStyle = rgbCss(sand); ctx.fillRect(x, y, ppg, ppg);
+    var dark = tint(sand, BLACK, 0.12);
+    var dots = 18 + Math.floor(rng() * 5);
+    var dr = Math.max(0.5, ppg * 0.01);
+    for (var i = 0; i < dots; i++) {
+      var dx = x + rng() * ppg, dy = y + rng() * ppg;
+      ctx.fillStyle = rgbCss(dark, 0.18 + rng() * 0.12);
+      ctx.beginPath(); ctx.arc(dx, dy, dr, 0, Math.PI * 2); ctx.fill();
+    }
+    var lines = 2 + Math.floor(rng() * 2);
+    ctx.lineWidth = Math.max(1, ppg * 0.012); ctx.lineCap = 'round';
+    for (var l = 0; l < lines; l++) {
+      var ly = y + ppg * (0.25 + l * 0.25) + (rng() - 0.5) * ppg * 0.06;
+      ctx.strokeStyle = rgbCss(dark, 0.25);
+      ctx.beginPath(); ctx.moveTo(x, ly);
+      for (var px = 0; px <= ppg; px += ppg * 0.1) {
+        ctx.lineTo(x + px, ly + Math.sin(px / ppg * Math.PI * 2 + l) * ppg * 0.02);
+      }
+      ctx.stroke();
+    }
+  }
+
+  function drawCobble(ctx, x, y, ppg, base, cellSeed) {
+    var rng = mulberry32(cellSeed);
+    var mortar = shade(base, -0.22);
+    ctx.fillStyle = rgbCss(mortar); ctx.fillRect(x, y, ppg, ppg);
+    var fill = shade(base, -0.06);
+    var rows = 3, cols = 3;
+    var gap = Math.max(1, ppg * 0.05);
+    var cw = (ppg - gap * (cols + 1)) / cols;
+    var ch = (ppg - gap * (rows + 1)) / rows;
+    var rad = Math.min(cw, ch) * 0.28;
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        var v = (rng() - 0.5) * 0.16;
+        var tone = v >= 0 ? tint(fill, WHITE, v) : tint(fill, BLACK, -v);
+        var sx = x + gap + c * (cw + gap);
+        var sy = y + gap + r * (ch + gap);
+        ctx.fillStyle = rgbCss(tone);
+        ctx.beginPath();
+        ctx.moveTo(sx + rad, sy);
+        ctx.arcTo(sx + cw, sy, sx + cw, sy + ch, rad);
+        ctx.arcTo(sx + cw, sy + ch, sx, sy + ch, rad);
+        ctx.arcTo(sx, sy + ch, sx, sy, rad);
+        ctx.arcTo(sx, sy, sx + cw, sy, rad);
+        ctx.closePath(); ctx.fill();
+      }
+    }
+  }
+
+  function drawMarble(ctx, x, y, ppg, base, cellSeed) {
+    var rng = mulberry32(cellSeed);
+    var marble = shade(base, 0.12);
+    ctx.fillStyle = rgbCss(marble); ctx.fillRect(x, y, ppg, ppg);
+    var vein = tint(marble, BLACK, 0.18);
+    ctx.strokeStyle = rgbCss(vein, 0.25);
+    ctx.lineWidth = Math.max(1, ppg * 0.018); ctx.lineCap = 'round';
+    var veins = 2 + Math.floor(rng() * 3);
+    for (var i = 0; i < veins; i++) {
+      var x0 = x + rng() * ppg, y0 = y + rng() * ppg;
+      var cx1 = x + rng() * ppg, cy1 = y + rng() * ppg;
+      var cx2 = x + rng() * ppg, cy2 = y + rng() * ppg;
+      var x1 = x + rng() * ppg, y1 = y + rng() * ppg;
+      ctx.beginPath(); ctx.moveTo(x0, y0);
+      ctx.bezierCurveTo(cx1, cy1, cx2, cy2, x1, y1);
+      ctx.stroke();
+    }
+  }
+
+  function drawMetal(ctx, x, y, ppg, base, cellSeed) {
+    var rng = mulberry32(cellSeed);
+    var metal = tint(shade(tint(base, GREY, 0.3), -0.08), BLUE, 0.06);
+    ctx.fillStyle = rgbCss(metal); ctx.fillRect(x, y, ppg, ppg);
+    ctx.strokeStyle = rgbCss(tint(metal, BLACK, 0.10), 0.12);
+    ctx.lineWidth = Math.max(0.5, ppg * 0.006);
+    for (var ly = ppg * 0.1; ly < ppg; ly += ppg * 0.1) {
+      ctx.beginPath();
+      ctx.moveTo(x, y + ly);
+      ctx.lineTo(x + ppg, y + ly + (rng() - 0.5) * ppg * 0.01);
+      ctx.stroke();
+    }
+    var m = Math.max(1, ppg * 0.04);
+    ctx.lineWidth = Math.max(1.5, ppg * 0.03);
+    ctx.strokeStyle = rgbCss(tint(metal, WHITE, 0.22), 0.55);
+    ctx.beginPath();
+    ctx.moveTo(x + m, y + ppg - m);
+    ctx.lineTo(x + m, y + m);
+    ctx.lineTo(x + ppg - m, y + m);
+    ctx.stroke();
+    ctx.strokeStyle = rgbCss(tint(metal, BLACK, 0.28), 0.55);
+    ctx.beginPath();
+    ctx.moveTo(x + ppg - m, y + m);
+    ctx.lineTo(x + ppg - m, y + ppg - m);
+    ctx.lineTo(x + m, y + ppg - m);
+    ctx.stroke();
+    var rr = Math.max(1, ppg * 0.022), off = m + rr;
+    var rivets = [[off, off], [ppg - off, off], [off, ppg - off], [ppg - off, ppg - off]];
+    for (var i = 0; i < rivets.length; i++) {
+      var rx = x + rivets[i][0], ry = y + rivets[i][1];
+      ctx.fillStyle = rgbCss(tint(metal, BLACK, 0.20), 0.5);
+      ctx.beginPath(); ctx.arc(rx, ry, rr, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = rgbCss(tint(metal, WHITE, 0.25), 0.5);
+      ctx.beginPath(); ctx.arc(rx - rr * 0.3, ry - rr * 0.3, rr * 0.4, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  function drawMoss(ctx, x, y, ppg, base, cellSeed) {
+    var rng = mulberry32(cellSeed);
+    var stone = shade(base, -0.05);
+    ctx.fillStyle = rgbCss(stone); ctx.fillRect(x, y, ppg, ppg);
+    var moss = tint(stone, GREEN, 0.3);
+    var blotches = 3 + Math.floor(rng() * 4);
+    for (var i = 0; i < blotches; i++) {
+      var bx = x + ppg * 0.1 + rng() * ppg * 0.8;
+      var by = y + ppg * 0.1 + rng() * ppg * 0.8;
+      var br = ppg * 0.08 + rng() * ppg * 0.14;
+      ctx.fillStyle = rgbCss(moss, 0.3);
+      ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
+    }
+    var dark = tint(tint(stone, GREEN, 0.3), BLACK, 0.15);
+    var specks = 6 + Math.floor(rng() * 6);
+    var dsr = Math.max(0.6, ppg * 0.012);
+    for (var j = 0; j < specks; j++) {
+      var sx = x + rng() * ppg, sy = y + rng() * ppg;
+      ctx.fillStyle = rgbCss(dark, 0.4);
+      ctx.beginPath(); ctx.arc(sx, sy, dsr, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
   // Resolve the grid stroke style for an export. The look defaults to the
   // style palette's `grid` colour; the user may override the colour, the
   // opacity, or both from the step-5 "Grid on export" controls. Pure — kept on
@@ -213,24 +373,50 @@
     return st.grid;
   }
 
+  // Parse an rgb()/rgba()/#hex colour into {r,g,b,a}.
+  function parseColor(s) {
+    var m = /rgba?\(([^)]+)\)/.exec(s || '');
+    if (m) {
+      var p = m[1].split(',').map(function (x) { return parseFloat(x.trim()); });
+      return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+    }
+    var h = hexToRgb(s); return { r: h.r, g: h.g, b: h.b, a: 1 };
+  }
+
   // ---------- grid (confined to floor cells, so margins stay clean) ----------
+  // Drawn as a CONTRASTING HALO under a bold CORE line so it stays clearly
+  // legible on ANY floor texture (accessibility: a faint single line vanishes on
+  // busy textures and for low-vision users). The halo is the opposite luminance
+  // of the line, so the grid reads whether the floor under it is light or dark.
   function drawGrid(ctx, floor, C, R, ppg, gridStyle) {
-    ctx.strokeStyle = gridStyle; ctx.lineWidth = Math.max(1, ppg / 60); ctx.lineCap = 'butt';
-    var c, r;
-    for (c = 0; c <= C; c++) {
-      for (r = 0; r < R; r++) {
-        var lv = c > 0 ? floor[r * C + (c - 1)] : 0;
-        var rv = c < C ? floor[r * C + c] : 0;
-        if (lv || rv) { ctx.beginPath(); ctx.moveTo(c * ppg, r * ppg); ctx.lineTo(c * ppg, (r + 1) * ppg); ctx.stroke(); }
+    var g = parseColor(gridStyle);
+    var core = { r: g.r, g: g.g, b: g.b };
+    var coreA = g.a != null ? g.a : 1;
+    var halo = luma(core) < 145 ? WHITE : BLACK;      // dark line -> light halo, and vice-versa
+    var coreW = Math.max(1.5, ppg / 42);
+    var haloW = coreW + Math.max(2.5, ppg / 24);
+    ctx.lineCap = 'butt';
+
+    function pass(strokeStyle, width) {
+      ctx.strokeStyle = strokeStyle; ctx.lineWidth = width;
+      var c, r;
+      for (c = 0; c <= C; c++) {
+        for (r = 0; r < R; r++) {
+          var lv = c > 0 ? floor[r * C + (c - 1)] : 0;
+          var rv = c < C ? floor[r * C + c] : 0;
+          if (lv || rv) { ctx.beginPath(); ctx.moveTo(c * ppg, r * ppg); ctx.lineTo(c * ppg, (r + 1) * ppg); ctx.stroke(); }
+        }
+      }
+      for (r = 0; r <= R; r++) {
+        for (c = 0; c < C; c++) {
+          var uv = r > 0 ? floor[(r - 1) * C + c] : 0;
+          var dv = r < R ? floor[r * C + c] : 0;
+          if (uv || dv) { ctx.beginPath(); ctx.moveTo(c * ppg, r * ppg); ctx.lineTo((c + 1) * ppg, r * ppg); ctx.stroke(); }
+        }
       }
     }
-    for (r = 0; r <= R; r++) {
-      for (c = 0; c < C; c++) {
-        var uv = r > 0 ? floor[(r - 1) * C + c] : 0;
-        var dv = r < R ? floor[r * C + c] : 0;
-        if (uv || dv) { ctx.beginPath(); ctx.moveTo(c * ppg, r * ppg); ctx.lineTo((c + 1) * ppg, r * ppg); ctx.stroke(); }
-      }
-    }
+    pass(rgbCss(halo, Math.min(0.9, coreA * 0.85)), haloW);   // contrasting halo underneath
+    pass(rgbCss(core, Math.min(1, coreA + 0.15)), coreW);     // bold core line on top
   }
 
   // ---------- walls ----------
@@ -488,6 +674,12 @@
         else if (texture === 'wood') drawWood(ctx, c, r, ppg, floorRgb);
         else if (texture === 'grass') drawGrass(ctx, x, y, ppg, floorRgb, cellSeed);
         else if (texture === 'water') drawWater(ctx, c, r, ppg, floorRgb);
+        else if (texture === 'dirt') drawDirt(ctx, x, y, ppg, floorRgb, cellSeed);
+        else if (texture === 'sand') drawSand(ctx, x, y, ppg, floorRgb, cellSeed);
+        else if (texture === 'cobble') drawCobble(ctx, x, y, ppg, floorRgb, cellSeed);
+        else if (texture === 'marble') drawMarble(ctx, x, y, ppg, floorRgb, cellSeed);
+        else if (texture === 'metal') drawMetal(ctx, x, y, ppg, floorRgb, cellSeed);
+        else if (texture === 'moss') drawMoss(ctx, x, y, ppg, floorRgb, cellSeed);
         ctx.restore();
       }
     }
@@ -524,7 +716,13 @@
     { id: 'cave', name: 'Cavern rock' },
     { id: 'wood', name: 'Wood planks' },
     { id: 'grass', name: 'Grass' },
-    { id: 'water', name: 'Water' }
+    { id: 'water', name: 'Water' },
+    { id: 'dirt', name: 'Packed dirt' },
+    { id: 'sand', name: 'Sand' },
+    { id: 'cobble', name: 'Cobblestone' },
+    { id: 'marble', name: 'Marble' },
+    { id: 'metal', name: 'Metal deck' },
+    { id: 'moss', name: 'Mossy stone' }
   ];
   var WALL_STYLES = [
     { id: 'solid', name: 'Solid' },
