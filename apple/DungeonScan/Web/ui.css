@@ -405,14 +405,25 @@ button:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
    symbols palette (step 4) — categories/grid come from stamps.js
    ============================================================ */
 .symbols { margin-top: var(--sp-4); border-top: 1px dashed var(--stone-300); padding-top: var(--sp-3); }
-.symbols summary {
-  cursor: pointer; font-size: var(--fs-sm); font-weight: 700; color: var(--stone-800);
-  list-style: none; user-select: none;
+.symbols-head { font-size: var(--fs-sm); font-weight: 700; color: var(--stone-800); }
+.symbols-hint { font-size: var(--fs-2xs); color: var(--stone-600); margin: 2px 0 var(--sp-2); }
+/* Always-visible scrollable panel (no dropdown) with obvious scroll affordances. */
+.stamp-scroll { position: relative; }
+/* soft bottom fade that signals "more below" (kept clear of the scrollbar gutter) */
+.stamp-scroll::after {
+  content: ''; position: absolute; left: 1px; right: 14px; bottom: 1px; height: 26px; pointer-events: none;
+  background: linear-gradient(to bottom, rgba(250,245,234,0), var(--stone-50));
+  border-radius: 0 0 var(--r-md) var(--r-md);
 }
-.symbols summary::-webkit-details-marker { display: none; }
-.symbols summary::before { content: '▸ '; color: var(--amber-600); }
-.symbols[open] summary::before { content: '▾ '; }
-.stamp-palette { max-height: 240px; overflow: auto; margin-top: var(--sp-3); padding-right: var(--sp-1); }
+.stamp-palette {
+  max-height: 200px; overflow-y: scroll; overflow-x: hidden;
+  padding: var(--sp-2); border: 1px solid var(--stone-200); border-radius: var(--r-md); background: var(--stone-50);
+}
+/* persistent chunky scrollbar so it's unmistakable this list scrolls */
+.stamp-palette::-webkit-scrollbar { width: 12px; }
+.stamp-palette::-webkit-scrollbar-track { background: var(--stone-100); border-radius: 8px; margin: 3px; }
+.stamp-palette::-webkit-scrollbar-thumb { background: var(--stone-500); border: 3px solid var(--stone-100); border-radius: 8px; }
+.stamp-palette::-webkit-scrollbar-thumb:hover { background: var(--amber-500); }
 
 /* ============================================================
    export row (step 5)
