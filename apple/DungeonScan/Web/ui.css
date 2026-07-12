@@ -105,6 +105,17 @@ body {
 }
 #app { display: flex; flex-direction: column; height: 100vh; }
 button { font-family: inherit; cursor: pointer; }
+
+/* ---- inline UI icons (Lucide, ISC license) — stroke inherits currentColor ---- */
+.ds-ic { display: inline-block; width: 1.05em; height: 1.05em; vertical-align: -0.16em; flex: none; }
+.tool .ic .ds-ic, .ic .ds-ic { width: 18px; height: 18px; vertical-align: middle; }
+.brand-mark .ds-ic { width: 20px; height: 20px; color: var(--amber-400); vertical-align: middle; }
+.demoji { color: var(--amber-400); }
+.demoji .ds-ic { width: 40px; height: 40px; vertical-align: middle; }
+.cap .ds-ic { width: 13px; height: 13px; }
+.sb-btns button .ds-ic { width: 17px; height: 17px; vertical-align: middle; }
+.stg-seg .ds-ic, .perspbar .ds-ic { width: 15px; height: 15px; }
+.modal .x .ds-ic { width: 16px; height: 16px; vertical-align: middle; }
 img { outline: 1px solid rgba(0,0,0,.1); outline-offset: -1px; }
 .hidden { display: none !important; }
 .hiddenfile { position: absolute; width: 0; height: 0; opacity: 0; }
@@ -414,6 +425,8 @@ button:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
 }
 .export-opts { margin-top: var(--sp-4); border-top: 1px dashed var(--stone-300); padding-top: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-3); }
 .export-opts .check.sub { font-size: var(--fs-2xs); font-weight: 600; color: var(--stone-600); margin-top: -2px; }
+.opt-hint { display: none; font-size: var(--fs-2xs); color: var(--amber-700); margin: 2px 0 0 25px; }
+.opt-hint.show { display: block; }
 .grid-color-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
 .grid-color-row .check { flex: 1 1 auto; }
 /* keep checkbox + its label tight-left; override the .ctl label space-between

@@ -17,6 +17,17 @@ Artists whose icons are included:
 Source: https://game-icons.net/  and  https://github.com/game-icons/icons
 
 
+UI ICONS
+--------
+The interface icons (open, save, undo/redo, tools, preview, etc.) are from
+Lucide (https://lucide.dev), used under the ISC license:
+
+  Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as
+  part of Feather (MIT). All other copyright (c) for Lucide are held by
+  Lucide Contributors 2022. Licensed under the ISC license.
+  Full text: https://github.com/lucide-icons/lucide/blob/main/LICENSE
+
+
 FONTS
 -----
 All fonts are licensed under the SIL Open Font License, Version 1.1

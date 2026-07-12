@@ -273,8 +273,8 @@
     bar.id = 'perspBar'; bar.className = 'perspbar hidden';
     bar.innerHTML = '<span class="ps-l">Drag the 4 corners to the paper</span>'
       + '<div class="ps-btns">'
-      + '<button id="psApply" type="button" class="ps-apply">✓ Apply straighten</button>'
-      + '<button id="psCancel" type="button">✕ Cancel</button>'
+      + '<button id="psApply" type="button" class="ps-apply">' + DS.icon('check') + ' Apply straighten</button>'
+      + '<button id="psCancel" type="button">' + DS.icon('x') + ' Cancel</button>'
       + '</div>';
     $('stageInner').appendChild(bar);
     $('psApply').addEventListener('click', applyPerspective);
@@ -387,7 +387,7 @@
   // ---------- mode switching ----------
   function syncModeChrome() {
     document.querySelectorAll('#modeToggle .seg-btn').forEach((b) => b.classList.toggle('on', b.dataset.mode === S.mode));
-    $('btn-read').textContent = S.mode === 'hex' ? '🖌️ Start painting' : '🔍 Read my dungeon';
+    $('btn-read').innerHTML = S.mode === 'hex' ? (DS.icon('floor') + ' Start painting') : (DS.icon('scan') + ' Read my dungeon');
     $('readTuning').classList.toggle('hidden', S.mode === 'hex');
     $('gridHint').textContent = S.mode === 'hex'
       ? 'Line up the hexes over your map. Auto-detect gives a starting point — nudge to fit.'
@@ -552,15 +552,15 @@
 
   // ---------- correction tools ----------
   const TOOLS = [
-    { id: 'wall', ic: '🧱', label: 'Wall' }, { id: 'floor', ic: '🟫', label: 'Room floor' },
-    { id: 'roombox', ic: '▭', label: 'Room (box)' }, { id: 'fillroom', ic: '🪣', label: 'Fill room' },
-    { id: 'door', ic: '🚪', label: 'Door' }, { id: 'erase', ic: '🧽', label: 'Erase wall' }
+    { id: 'wall', ic: 'wall', label: 'Wall' }, { id: 'floor', ic: 'floor', label: 'Room floor' },
+    { id: 'roombox', ic: 'room', label: 'Room (box)' }, { id: 'fillroom', ic: 'fill', label: 'Fill room' },
+    { id: 'door', ic: 'door', label: 'Door' }, { id: 'erase', ic: 'eraser', label: 'Erase wall' }
   ];
   function buildTools() {
     const el = $('tools'); el.innerHTML = '';
     for (const t of TOOLS) {
       const b = document.createElement('button'); b.className = 'tool' + (t.id === S.tool ? ' on' : '');
-      b.innerHTML = `<span class="ic">${t.ic}</span> ${t.label}`;
+      b.innerHTML = `<span class="ic">${DS.icon(t.ic)}</span> ${t.label}`;
       b.addEventListener('click', () => { S.tool = t.id; buildTools(); updateToolHint(); if (S.preview) setStageMode('edit'); });
       el.appendChild(b);
     }
@@ -594,7 +594,7 @@
       b.addEventListener('click', onClick);
       el.appendChild(b);
     };
-    mk('Erase', '<span class="ic">🧽</span> Erase', S.hexTerrain === 'erase', () => { S.hexTerrain = 'erase'; buildHexTools(); });
+    mk('Erase', '<span class="ic">' + DS.icon('eraser') + '</span> Erase', S.hexTerrain === 'erase', () => { S.hexTerrain = 'erase'; buildHexTools(); });
     for (const t of DS.hex.TERRAINS) {
       mk(t.name, `<span class="swatch" style="background:${t.color}"></span> ${t.name}`, S.hexTerrain === t.id, () => { S.hexTerrain = t.id; buildHexTools(); });
     }
@@ -715,7 +715,7 @@
     S.stamps.push({ id, x: 0.5, y: 0.5, size: 0.08, rotation: 0, color: '#1b2430', label: '' });
     S.selStamp = S.stamps.length - 1;
     DS.stamps.ensureLoaded(S.stamps).then(render);
-    showStampBar(); render();
+    showStampBar(); refreshLegendHint(); render();
   }
   function mutSel(fn, reload) {
     if (S.selStamp == null || !S.stamps[S.selStamp]) return;
@@ -742,9 +742,9 @@
       + '<div class="sb-group"><span class="sb-l">Color</span><input id="sbColor" type="color" value="#1b2430"/></div>'
       + '<div class="sb-group sb-grow"><span class="sb-l">Label</span><input id="sbLabel" type="text" placeholder="label (optional)" maxlength="24"/></div>'
       + '<div class="sb-btns">'
-      + '<button id="sbDup" type="button" title="Duplicate">⧉</button>'
-      + '<button id="sbDel" type="button" title="Delete">🗑</button>'
-      + '<button id="sbClose" type="button" title="Done">✕</button>'
+      + '<button id="sbDup" type="button" title="Duplicate" aria-label="Duplicate">' + DS.icon('copy') + '</button>'
+      + '<button id="sbDel" type="button" title="Delete" aria-label="Delete">' + DS.icon('trash') + '</button>'
+      + '<button id="sbClose" type="button" title="Done" aria-label="Done">' + DS.icon('x') + '</button>'
       + '</div>';
     $('stageInner').appendChild(bar);
     $('sbSize').addEventListener('input', (e) => mutSel((st) => { st.size = Number(e.target.value); }));
@@ -755,11 +755,11 @@
       if (S.selStamp == null) return; pushHistory();
       const o = S.stamps[S.selStamp];
       S.stamps.push({ ...o, x: clamp01(o.x + 0.03), y: clamp01(o.y + 0.03) });
-      S.selStamp = S.stamps.length - 1; syncStampBar(); render();
+      S.selStamp = S.stamps.length - 1; syncStampBar(); refreshLegendHint(); render();
     });
     $('sbDel').addEventListener('click', () => {
       if (S.selStamp == null) return; pushHistory();
-      S.stamps.splice(S.selStamp, 1); S.selStamp = null; hideStampBar(); render();
+      S.stamps.splice(S.selStamp, 1); S.selStamp = null; hideStampBar(); refreshLegendHint(); render();
     });
     $('sbClose').addEventListener('click', () => { S.selStamp = null; hideStampBar(); render(); });
   }
@@ -922,8 +922,8 @@
     if ($('stageToggle')) return;
     const t = document.createElement('div');
     t.id = 'stageToggle'; t.className = 'stage-toggle hidden';
-    t.innerHTML = '<button type="button" class="stg-seg on" data-view="edit">✏️ Edit</button>'
-      + '<button type="button" class="stg-seg" data-view="preview">✨ Preview</button>';
+    t.innerHTML = '<button type="button" class="stg-seg on" data-view="edit">' + DS.icon('pencil') + ' Edit</button>'
+      + '<button type="button" class="stg-seg" data-view="preview">' + DS.icon('eye') + ' Preview</button>';
     t.querySelectorAll('.stg-seg').forEach((b) => b.addEventListener('click', () => setStageMode(b.dataset.view)));
     $('stageInner').appendChild(t);
   }
@@ -1019,12 +1019,21 @@
   }
   // Legend + grid-on-export controls (step 5). `withGrid` false for hex maps,
   // which have no square grid to toggle.
+  // The legend lists placed symbols, so it's empty until some are dropped.
+  // Show a hint when "Show legend" is on but no symbols exist yet.
+  function refreshLegendHint() {
+    const h = $('legendHint'); if (!h) return;
+    h.classList.toggle('show', !!(S.showLegend && !(S.stamps && S.stamps.length)));
+  }
   function buildExportOptions(el, withGrid) {
     const wrap = document.createElement('div'); wrap.className = 'ctl export-opts';
     const legLabel = document.createElement('label'); legLabel.className = 'check';
     legLabel.innerHTML = '<input type="checkbox"' + (S.showLegend ? ' checked' : '') + '/> Show legend (placed symbols)';
-    legLabel.querySelector('input').addEventListener('change', (e) => { S.showLegend = e.target.checked; previewNow(); });
+    legLabel.querySelector('input').addEventListener('change', (e) => { S.showLegend = e.target.checked; refreshLegendHint(); previewNow(); });
     wrap.appendChild(legLabel);
+    const legHint = document.createElement('div'); legHint.id = 'legendHint'; legHint.className = 'opt-hint';
+    legHint.textContent = 'Drop symbols on the map in step 4 first — the legend lists them.';
+    wrap.appendChild(legHint);
     if (withGrid) {
       const gridLabel = document.createElement('label'); gridLabel.className = 'check';
       gridLabel.innerHTML = '<input type="checkbox"' + (S.gridOnExport ? ' checked' : '') + '/> Grid on export';
@@ -1055,6 +1064,7 @@
       wrap.appendChild(opRow);
     }
     el.appendChild(wrap);
+    refreshLegendHint();
   }
   // hex export controls: just a hex map style + pixels-per-hex. Floor texture /
   // wall style don't apply (hex maps have no walls).
@@ -1111,7 +1121,7 @@
     for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
     return `data:${mime};base64,${btoa(bin)}`;
   }
-  const SAVE_LABEL = { png: '💾 Save PNG', jpg: '💾 Save JPEG', webp: '💾 Save WebP', pdf: '💾 Save PDF', 'pdf-tiled': '💾 Save tiled PDF', dd2vtt: '💾 Save Universal VTT', 'foundry-json': '💾 Save Foundry scene' };
+  const SAVE_LABEL = { png: 'Save PNG', jpg: 'Save JPEG', webp: 'Save WebP', pdf: 'Save PDF', 'pdf-tiled': 'Save tiled PDF', dd2vtt: 'Save Universal VTT', 'foundry-json': 'Save Foundry scene' };
   function buildExportFormatSelect() {
     const sel = $('exportFormat'); sel.innerHTML = '';
     DS.EXPORT_FORMATS.forEach((f) => { const o = document.createElement('option'); o.value = f.id; o.textContent = f.name; sel.appendChild(o); });
@@ -1119,7 +1129,7 @@
     const onChange = () => {
       const isPdf = sel.value === 'pdf' || sel.value === 'pdf-tiled';
       $('ipsWrap').classList.toggle('hidden', !isPdf);
-      $('btn-save').textContent = SAVE_LABEL[sel.value] || '💾 Save map';
+      $('btn-save').innerHTML = DS.icon('download') + ' ' + (SAVE_LABEL[sel.value] || 'Save map');
     };
     sel.addEventListener('change', onChange); onChange();
   }
@@ -1217,7 +1227,7 @@
   }
   function saveNote(r, what) {
     const n = $('saveNote');
-    if (r && r.ok) { n.style.color = 'var(--green)'; n.textContent = `✅ Saved ${what}.`; }
+    if (r && r.ok) { n.style.color = 'var(--green)'; n.innerHTML = DS.icon('check') + ` Saved ${what}.`; }
     else if (r && r.browser === false) n.textContent = '';
     else { n.style.color = '#c05'; n.textContent = 'Could not save — ' + what; }
   }
@@ -1311,6 +1321,7 @@
   }
 
   async function boot() {
+    if (window.DS && DS.hydrateIcons) DS.hydrateIcons(document);   // swap data-ic placeholders for SVG icons
     [3, 4, 5].forEach(relock); relock(2);
     buildSamples();
     buildStampBar();
@@ -1367,15 +1378,15 @@
     });
     const caps = await DSBridge.capabilities();
     S.caps = caps;
-    $('capBadge').textContent = '● offline · on-device' + (caps.ocr ? ' · text ✓' : '') + (caps.classify ? ' · symbols ✓' : '') + (caps.terrain ? ' · terrain ✓' : '') + (caps.ollama ? ' · AI ✓' : '');
+    $('capBadge').innerHTML = DS.icon('shield') + ' offline · on-device' + (caps.ocr ? ' · text' : '') + (caps.classify ? ' · symbols' : '') + (caps.terrain ? ' · terrain' : '') + (caps.ollama ? ' · AI' : '');
     reflectFeatureButtons();   // terrain-button visibility depends on caps
     // optional local-VLM "smart read" — only in the Developer-ID build with Ollama
     if (caps.ollama) {
       const body = document.querySelector('.step[data-step="5"] .sbody');
-      const b = document.createElement('button'); b.id = 'btn-smart'; b.className = 'primary wide'; b.textContent = '🧠 AI room notes (local)'; b.style.marginTop = 'var(--sp-3)';
+      const b = document.createElement('button'); b.id = 'btn-smart'; b.className = 'primary wide'; b.innerHTML = DS.icon('sparkles') + ' AI room notes (local)'; b.style.marginTop = 'var(--sp-3)';
       b.addEventListener('click', smartRead);
       const box = document.createElement('pre'); box.id = 'notesBox'; box.className = 'notesbox hidden';
-      const save = document.createElement('button'); save.id = 'btn-notes'; save.className = 'save wide hidden ai'; save.textContent = '📝 Save AI notes (.txt)';
+      const save = document.createElement('button'); save.id = 'btn-notes'; save.className = 'save wide hidden ai'; save.innerHTML = DS.icon('key') + ' Save AI notes (.txt)';
       save.addEventListener('click', saveNotes);
       body.appendChild(b); body.appendChild(box); body.appendChild(save);
     }
