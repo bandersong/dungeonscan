@@ -41,6 +41,7 @@
     gridColor: '',                  // '' = use the style palette colour; else a hex override
     gridOpacity: null,              // null = palette default; else 0..1 override
     projectName: '',                // last saved/loaded .dungeonscan filename (no ext)
+    zoom: 1,                        // stage zoom: 1 = fit-to-box; >1 magnifies (stage scrolls to pan)
     // perspective 4-corner straighten (step 2): null off, or 4 {x,y} in image px
     corners: null,                  // [{x,y}×4] TL,TR,BR,BL while perspActive
     perspActive: false,
@@ -104,20 +105,53 @@
     $('drop').classList.add('hidden');
     hideStampBar();
     S.preview = false;
+    S.zoom = 1;                                                       // fresh photo starts fit-to-window
     if ($('stageToggle')) $('stageToggle').classList.add('hidden');   // hidden until a map is read
+    showZoomPill();
     autoGrid();
     buildGridControls();
     unlock(2); unlock(3); relock(4); relock(5);
+    maybeCoach();
     updateUndoRedoButtons();
     setStatus(name ? `Loaded ${name}. Now line up the grid.` : 'Loaded. Now line up the grid.');
     fitView(); render();
   }
-  function fitView() {
+  // The size the canvas would be at zoom 1 (fully fit inside the stage box).
+  function fitBase() {
     const box = $('stageInner'), pad = 44;
     const availW = box.clientWidth - pad, availH = box.clientHeight - pad;
     const ar = view.width / view.height;
     let dw = availW, dh = dw / ar; if (dh > availH) { dh = availH; dw = dh * ar; }
-    view.style.width = Math.max(50, dw) + 'px'; view.style.height = Math.max(50, dh) + 'px';
+    return { dw: Math.max(50, dw), dh: Math.max(50, dh) };
+  }
+  function fitView() {
+    const { dw, dh } = fitBase();
+    const z = S.zoom || 1;
+    view.style.width = (dw * z) + 'px';
+    view.style.height = (dh * z) + 'px';
+    syncZoomChrome();
+  }
+  // Set the zoom, keeping the given stage-box point (default: box center) pinned
+  // in place so magnifying feels like leaning in, not jumping. The stage-inner
+  // element scrolls when the canvas is larger than the box — that's the panning.
+  function setZoom(z, anchor) {
+    if (!S.work) return;
+    const box = $('stageInner');
+    const nz = Math.max(1, Math.min(8, Math.round(z * 100) / 100));
+    const a = anchor || { x: box.clientWidth / 2, y: box.clientHeight / 2 };
+    const beforeW = view.offsetWidth || 1, beforeH = view.offsetHeight || 1;
+    const fx = (box.scrollLeft + a.x) / beforeW, fy = (box.scrollTop + a.y) / beforeH;
+    S.zoom = nz;
+    fitView();
+    box.scrollLeft = fx * view.offsetWidth - a.x;
+    box.scrollTop = fy * view.offsetHeight - a.y;
+    syncZoomChrome();
+  }
+  // First few photos: show the hand-holding "how to line up the grid" card until
+  // the user dismisses it (then it stays gone).
+  function maybeCoach() {
+    const c = $('coachAlign'); if (!c) return;
+    c.classList.toggle('hidden', prefGet('coachAlignDone') === '1');
   }
   function baseName(filename) { return String(filename || '').replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, ''); }
   function clampImg(v, max) { return v < 0 ? 0 : v > max ? max : v; }
@@ -199,6 +233,7 @@
       // rebuild the UI for whatever mode the project was saved in
       view.width = w; view.height = h;
       $('drop').classList.add('hidden');
+      S.zoom = 1; showZoomPill();
       hideStampBar(); hidePerspectiveBar();
       if (S.mode === 'hex') buildHexGridControls(); else buildGridControls();
       reflectMode();
@@ -351,23 +386,85 @@
     S.grid.C = Math.max(1, Math.floor((S.w - S.grid.ox) / S.grid.s));
     S.grid.R = Math.max(1, Math.floor((S.h - S.grid.oy) / S.grid.s));
   }
+  // ---------- direct grid manipulation (shared by square + hex) ----------
+  function clampNum(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+  function gridSizeMax() { return S.mode === 'hex' ? Math.max(10, Math.round(Math.min(S.w, S.h) / 3)) : Math.round(Math.min(S.w, S.h) / 4); }
+  function gridSizeMin() { return S.mode === 'hex' ? 8 : 12; }
+  function curSize() { return S.mode === 'hex' ? (S.hexGrid ? S.hexGrid.size : 0) : S.grid.s; }
+  // Grid changed after a read → the detection is stale, so drop back to unread.
+  function invalidateRead() { if (S.mode === 'square' && S.walls) { S.walls = null; S.floor = null; relock(4); relock(5); } }
+  // Slide the grid origin by (dx,dy) image pixels. Origin only needs to travel one
+  // cell to phase-align, so we clamp to ±one cell — enough to line up, never lost.
+  function nudgeGrid(dx, dy) {
+    if (S.mode === 'hex') {
+      const g = S.hexGrid; if (!g) return;
+      g.ox = clampNum(g.ox + dx, -g.size, g.size); g.oy = clampNum(g.oy + dy, -g.size, g.size);
+      recomputeHexCR();
+    } else {
+      const s = S.grid.s;
+      S.grid.ox = clampNum(S.grid.ox + dx, -s, s); S.grid.oy = clampNum(S.grid.oy + dy, -s, s);
+      recomputeCR(); invalidateRead();
+    }
+    render();
+  }
+  // Grow/shrink the cell (square) or hex by d pixels.
+  function bumpSize(d) {
+    setSize(curSize() + d);
+  }
+  function setSize(v) {
+    const nv = clampNum(Math.round(v), gridSizeMin(), gridSizeMax());
+    if (S.mode === 'hex') { if (!S.hexGrid) return; S.hexGrid.size = nv; recomputeHexCR(); }
+    else { S.grid.s = nv; recomputeCR(); invalidateRead(); }
+    syncGridReadout(); render();
+  }
+  function syncGridReadout() {
+    const v = Math.round(curSize());
+    const r = $('gv-cell'); if (r) r.textContent = v + 'px';
+    const sl = $('grid-size-range'); if (sl && Number(sl.value) !== v) sl.value = v;
+  }
+  // A press-and-hold repeat button (holding accelerates a 1px nudge into a slide).
+  function mkStepBtn(txt, cls, fn) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'step-btn ' + cls; b.textContent = txt;
+    let t = null, iv = null;
+    const stop = () => { if (t) clearTimeout(t); if (iv) clearInterval(iv); t = iv = null; };
+    b.addEventListener('pointerdown', (e) => { e.preventDefault(); fn(); t = setTimeout(() => { iv = setInterval(fn, 55); }, 300); });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => b.addEventListener(ev, stop));
+    return b;
+  }
+  // "Square size" / "Hex size" row: −  [slider]  +  with a live px readout.
+  function sizeControl(label) {
+    const w = document.createElement('div'); w.className = 'ctl';
+    w.innerHTML = `<label><span>${label}</span><span class="v" id="gv-cell">${Math.round(curSize())}px</span></label>`;
+    const row = document.createElement('div'); row.className = 'stepper';
+    const inp = document.createElement('input');
+    inp.type = 'range'; inp.id = 'grid-size-range'; inp.min = gridSizeMin(); inp.max = gridSizeMax(); inp.step = 1; inp.value = Math.round(curSize());
+    inp.addEventListener('input', () => setSize(Number(inp.value)));
+    row.appendChild(mkStepBtn('−', 'step-minus', () => bumpSize(-1)));
+    row.appendChild(inp);
+    row.appendChild(mkStepBtn('+', 'step-plus', () => bumpSize(1)));
+    w.appendChild(row); return w;
+  }
+  // A 4-way nudge pad for precise 1px origin moves (for anyone who can't drag exactly).
+  function nudgePad() {
+    const w = document.createElement('div'); w.className = 'ctl';
+    w.innerHTML = `<label><span>Fine position</span><span class="v muted">drag the grid, or nudge:</span></label>`;
+    const pad = document.createElement('div'); pad.className = 'dpad';
+    pad.appendChild(mkStepBtn('▲', 'd-up', () => nudgeGrid(0, -1)));
+    pad.appendChild(mkStepBtn('◀', 'd-left', () => nudgeGrid(-1, 0)));
+    pad.appendChild(mkStepBtn('▶', 'd-right', () => nudgeGrid(1, 0)));
+    pad.appendChild(mkStepBtn('▼', 'd-down', () => nudgeGrid(0, 1)));
+    w.appendChild(pad); return w;
+  }
+  function gridTip() {
+    const p = document.createElement('p'); p.className = 'hint tip';
+    p.innerHTML = 'Tip: <b>drag the grid</b> right on the photo to line it up, then <b>zoom in</b> (bottom-right) and check a corner.';
+    return p;
+  }
   function buildGridControls() {
     const el = $('gridControls'); el.innerHTML = '';
-    const mk = (id, label, min, max, step, val, fmt) => {
-      const w = document.createElement('div'); w.className = 'ctl';
-      w.innerHTML = `<label><span>${label}</span><span class="v" id="gv-${id}">${fmt(val)}</span></label>`;
-      const inp = document.createElement('input'); inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = val;
-      inp.addEventListener('input', () => {
-        S.grid[id === 'cell' ? 's' : id] = Number(inp.value);
-        recomputeCR(); $(`gv-${id}`).textContent = fmt(Number(inp.value));
-        if (S.walls) { S.walls = null; S.floor = null; relock(4); relock(5); } // grid changed → must re-read
-        render();
-      });
-      w.appendChild(inp); el.appendChild(w); return inp;
-    };
-    mk('cell', 'Square size', 12, Math.round(Math.min(S.w, S.h) / 4), 1, S.grid.s, (v) => v + 'px');
-    mk('ox', 'Nudge sideways', 0, Math.max(2, Math.round(S.grid.s)), 1, S.grid.ox, (v) => v + 'px');
-    mk('oy', 'Nudge up/down', 0, Math.max(2, Math.round(S.grid.s)), 1, S.grid.oy, (v) => v + 'px');
+    el.appendChild(sizeControl('Square size'));
+    el.appendChild(nudgePad());
+    el.appendChild(gridTip());
   }
 
   // ---------- hex grid ----------
@@ -379,21 +476,10 @@
   }
   function buildHexGridControls() {
     const el = $('gridControls'); el.innerHTML = '';
-    const g = S.hexGrid;
-    const mk = (id, label, min, max, step, val, fmt) => {
-      const w = document.createElement('div'); w.className = 'ctl';
-      w.innerHTML = `<label><span>${label}</span><span class="v" id="hv-${id}">${fmt(val)}</span></label>`;
-      const inp = document.createElement('input'); inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = val;
-      inp.addEventListener('input', () => {
-        S.hexGrid[id] = Number(inp.value);
-        recomputeHexCR(); $(`hv-${id}`).textContent = fmt(Number(inp.value));
-        render();
-      });
-      w.appendChild(inp); el.appendChild(w);
-    };
-    mk('size', 'Hex size', 8, Math.max(10, Math.round(Math.min(S.w, S.h) / 3)), 1, g.size, (v) => v + 'px');
-    mk('ox', 'Nudge sideways', 0, Math.max(2, S.w), 1, g.ox, (v) => v + 'px');
-    mk('oy', 'Nudge up/down', 0, Math.max(2, S.h), 1, g.oy, (v) => v + 'px');
+    if (!S.hexGrid) return;
+    el.appendChild(sizeControl('Hex size'));
+    el.appendChild(nudgePad());
+    el.appendChild(gridTip());
   }
 
   // ---------- mode switching ----------
@@ -800,6 +886,9 @@
     return { x: (ev.clientX - r.left) * (view.width / r.width), y: (ev.clientY - r.top) * (view.height / r.height) };
   }
   let painting = false;
+  // grid-alignment drag: before a dungeon is read, dragging on the photo slides
+  // the whole grid (its origin) so lining it up is direct instead of slider-hunting.
+  let aligning = false, alignLast = null;
   // hex terrain brush — paints (or erases) the hex under the cursor
   function paintHex(p, erase) {
     const h = DS.hex.hexAt(p.x, p.y, S.hexGrid); if (!h) return;
@@ -815,7 +904,13 @@
       if (ci >= 0) { painting = true; view.setPointerCapture(ev.pointerId); S.dragCorner = ci; }
       return;
     }
-    if (!editReady()) return;
+    if (!editReady()) {
+      // grid not locked yet → drag anywhere slides the grid into place
+      if (!S.work) return;
+      aligning = true; alignLast = p; view.setPointerCapture(ev.pointerId);
+      view.classList.add('dragging');
+      return;
+    }
     painting = true; view.setPointerCapture(ev.pointerId);
     // stamps take priority: click one to select & drag it
     const si = stampAt(p.x, p.y);
@@ -842,6 +937,12 @@
     pushHistory(); applyTool(p.x, p.y, true);
   });
   view.addEventListener('pointermove', (ev) => {
+    if (aligning) {
+      const p = toImg(ev);
+      nudgeGrid(p.x - alignLast.x, p.y - alignLast.y);
+      alignLast = p;
+      return;
+    }
     if (!painting) return;
     const p = toImg(ev);
     if (S.perspActive && S.dragCorner != null && S.corners) {
@@ -869,6 +970,7 @@
     if (S.tool === 'roombox' && S.boxStart && S.boxCur) { commitRoomBox(); S.boxStart = S.boxCur = null; render(); }
     S.dragStamp = false; S.dragOff = null;
     S.dragCorner = null;
+    if (aligning) { aligning = false; alignLast = null; view.classList.remove('dragging'); syncGridReadout(); }
     painting = false;
   });
   // right-click is an erase stroke in hex mode — suppress the browser menu
@@ -880,6 +982,8 @@
     // (or preview flag stale), snap back to the working-image dimensions first.
     if (S.preview) { S.preview = false; syncStageToggle(); }
     view.classList.remove('viewing');
+    // before the dungeon is read, the whole photo is a grab-to-align surface
+    view.classList.toggle('aligning', !!S.work && !S.perspActive && !editReady());
     if (S.w && (view.width !== S.w || view.height !== S.h)) { view.width = S.w; view.height = S.h; fitView(); }
     vctx.clearRect(0, 0, view.width, view.height);
     if (S.work) vctx.drawImage(S.work, 0, 0);
@@ -951,9 +1055,29 @@
     t.innerHTML = '<button type="button" class="stg-seg on" data-view="edit">' + DS.icon('pencil') + ' Edit</button>'
       + '<button type="button" class="stg-seg" data-view="preview">' + DS.icon('eye') + ' Preview</button>';
     t.querySelectorAll('.stg-seg').forEach((b) => b.addEventListener('click', () => setStageMode(b.dataset.view)));
-    $('stageInner').appendChild(t);
+    // Overlays live on .stage (not .stage-inner) so they stay pinned while the
+    // inner element scrolls to pan a zoomed-in canvas.
+    document.querySelector('.stage').appendChild(t);
   }
   function showStageToggle() { buildStageToggle(); $('stageToggle').classList.remove('hidden'); syncStageToggle(); }
+
+  // ---------- zoom + pan chrome ----------
+  // A small floating pill (bottom-right of the stage) with − / level / +. Zooming
+  // magnifies the canvas past its fit size; the stage-inner then scrolls to pan.
+  function buildZoomPill() {
+    if ($('zoomPill')) return;
+    const z = document.createElement('div');
+    z.id = 'zoomPill'; z.className = 'zoom-pill hidden';
+    z.innerHTML = '<button type="button" id="zOut" aria-label="Zoom out" title="Zoom out">−</button>'
+      + '<button type="button" id="zLvl" aria-label="Reset zoom" title="Fit to window">100%</button>'
+      + '<button type="button" id="zIn" aria-label="Zoom in" title="Zoom in">+</button>';
+    document.querySelector('.stage').appendChild(z);
+    $('zOut').addEventListener('click', () => setZoom((S.zoom || 1) - 0.5));
+    $('zIn').addEventListener('click', () => setZoom((S.zoom || 1) + 0.5));
+    $('zLvl').addEventListener('click', () => setZoom(1));
+  }
+  function showZoomPill() { buildZoomPill(); $('zoomPill').classList.remove('hidden'); syncZoomChrome(); }
+  function syncZoomChrome() { const l = $('zLvl'); if (l) l.textContent = Math.round((S.zoom || 1) * 100) + '%'; }
   function syncStageToggle() {
     const t = $('stageToggle'); if (!t) return;
     t.querySelectorAll('.stg-seg').forEach((b) => b.classList.toggle('on', (b.dataset.view === 'preview') === !!S.preview));
@@ -1410,12 +1534,38 @@
     stage.addEventListener('dragleave', () => $('drop').classList.remove('drag'));
     stage.addEventListener('drop', (e) => { e.preventDefault(); $('drop').classList.remove('drag'); const f = e.dataTransfer.files[0]; if (f && (f.type.startsWith('image/') || f.type === 'application/pdf' || /\.pdf$/i.test(f.name))) ingestFile(f); });
     window.addEventListener('resize', () => { if (S.img) fitView(); });
+    // Pinch (trackpad) or ⌘/Ctrl + wheel zooms toward the cursor; a plain two-finger
+    // scroll is left alone so it pans the zoomed-in canvas natively.
+    stage.addEventListener('wheel', (e) => {
+      if (!S.work || !(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const r = stage.getBoundingClientRect();
+      setZoom((S.zoom || 1) * (e.deltaY < 0 ? 1.12 : 0.89), { x: e.clientX - r.left, y: e.clientY - r.top });
+    }, { passive: false });
     document.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (e.shiftKey) redo(); else undo();
       }
+      // Arrow keys nudge the grid 1px (Shift = 10) and −/+ resize it — but only
+      // while lining up (before a read) and never while typing in a field.
+      if (!S.work || S.perspActive || S.preview || editReady()) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      const d = e.shiftKey ? 10 : 1;
+      switch (e.key) {
+        case 'ArrowLeft': nudgeGrid(-d, 0); break;
+        case 'ArrowRight': nudgeGrid(d, 0); break;
+        case 'ArrowUp': nudgeGrid(0, -d); break;
+        case 'ArrowDown': nudgeGrid(0, d); break;
+        case '-': case '_': bumpSize(-d); break;
+        case '=': case '+': bumpSize(d); break;
+        default: return;
+      }
+      e.preventDefault();
     });
+    const coachOk = $('coachAlignOk');
+    if (coachOk) coachOk.addEventListener('click', () => { prefSet('coachAlignDone', '1'); const c = $('coachAlign'); if (c) c.classList.add('hidden'); });
     const caps = await DSBridge.capabilities();
     S.caps = caps;
     $('capBadge').innerHTML = DS.icon('shield') + ' offline · on-device' + (caps.ocr ? ' · text' : '') + (caps.classify ? ' · symbols' : '') + (caps.terrain ? ' · terrain' : '') + (caps.ollama ? ' · AI' : '');

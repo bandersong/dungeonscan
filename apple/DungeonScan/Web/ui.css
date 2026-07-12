@@ -169,24 +169,46 @@ img { outline: 1px solid rgba(0,0,0,.1); outline-offset: -1px; }
 .layout { flex: 1; display: flex; min-height: 0; }
 
 .stage {
+  position: relative;   /* anchors the floating zoom pill + edit/preview toggle */
   flex: 1; display: flex; flex-direction: column; min-width: 0;
   background:
     radial-gradient(120% 90% at 50% 0%, var(--espresso-900), var(--espresso-950)),
     repeating-linear-gradient(0deg, rgba(236,226,207,.02) 0 1px, transparent 1px 34px),
     repeating-linear-gradient(90deg, rgba(236,226,207,.02) 0 1px, transparent 1px 34px);
 }
+/* overflow:auto turns the stage into the scroller: when the canvas is zoomed past
+   its fit size it overflows and the user pans by scrolling. margin:auto on #view
+   keeps it centered when it fits AND stays reachable from scroll(0,0) when it doesn't. */
 .stage-inner {
-  flex: 1; display: flex; align-items: center; justify-content: center;
+  flex: 1; display: flex; overflow: auto;
   padding: var(--sp-6); min-height: 0; position: relative;
   box-shadow: var(--stage-recess);
   margin: var(--sp-4); border-radius: var(--r-lg);
 }
 #view {
-  max-width: 100%; max-height: 100%; background: #0c0f13;
+  margin: auto; background: #0c0f13;
   border-radius: var(--r-sm); box-shadow: 0 18px 44px rgba(0,0,0,.55), 0 0 0 1px var(--espresso-700);
   touch-action: none; cursor: crosshair;
 }
 #view.viewing { cursor: default; }   /* preview mode — the map isn't editable here */
+#view.aligning { cursor: grab; }               /* before a read: drag to slide the grid */
+#view.aligning.dragging { cursor: grabbing; }
+
+/* zoom pill — bottom-right of the stage, pinned above the scrolling canvas */
+.zoom-pill {
+  position: absolute; right: var(--sp-5); bottom: calc(var(--sp-4) + 34px); z-index: 6;
+  display: inline-flex; align-items: center; gap: 2px; padding: 3px;
+  background: rgba(20,16,11,.72); border: 1px solid var(--espresso-line);
+  border-radius: 999px; box-shadow: 0 6px 20px rgba(0,0,0,.4); backdrop-filter: blur(6px);
+}
+.zoom-pill.hidden { display: none; }
+.zoom-pill button {
+  border: 0; background: transparent; color: var(--cream-muted);
+  font: inherit; font-size: 17px; font-weight: 700; line-height: 1; cursor: pointer;
+  min-width: 30px; height: 26px; padding: 0 6px; border-radius: 999px;
+}
+.zoom-pill button:hover { color: var(--cream-text); background: rgba(255,255,255,.08); }
+#zLvl { font-size: var(--fs-xs); min-width: 48px; font-variant-numeric: tabular-nums; }
 
 /* Edit / Preview toggle — floats over the stage once a map is read, so the styled
    "Save your map" look can be seen live instead of picked blind. */
@@ -337,6 +359,45 @@ button:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
 .ctl label { display: flex; justify-content: space-between; font-size: var(--fs-sm); font-weight: 600; margin-bottom: var(--sp-1); }
 .ctl .v { color: var(--amber-600); font-weight: 700; font-variant-numeric: tabular-nums; }
 .ctl input[type=range] { width: 100%; accent-color: var(--amber-600); }
+.ctl .v.muted { color: var(--stone-500); font-weight: 500; }
+
+/* size stepper: −  [slider]  +  — big tappable buttons flanking the slider */
+.stepper { display: flex; align-items: center; gap: var(--sp-2); }
+.stepper input[type=range] { flex: 1; }
+.step-btn {
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: var(--r-md);
+  border: 1.5px solid var(--stone-300); background: var(--stone-0); color: var(--stone-800);
+  font-size: 19px; line-height: 1; font-weight: 700; cursor: pointer; user-select: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.step-btn:hover { border-color: var(--amber-500); }
+.step-btn:active { background: var(--stone-100); transform: translateY(1px); }
+
+/* 4-way nudge pad — 1px origin moves for anyone who can't drag exactly */
+.dpad {
+  display: grid; grid-template-columns: repeat(3, 34px); grid-template-rows: repeat(3, 34px);
+  gap: 4px; justify-content: center;
+}
+.dpad .step-btn { font-size: 12px; }
+.dpad .d-up { grid-area: 1 / 2; }
+.dpad .d-left { grid-area: 2 / 1; }
+.dpad .d-right { grid-area: 2 / 3; }
+.dpad .d-down { grid-area: 3 / 2; }
+.hint.tip { margin-top: var(--sp-1); margin-bottom: 0; }
+
+/* first-run "how to line up the grid" coach card (parchment, matches the app) */
+.coach {
+  background: linear-gradient(180deg, #efe5cb, #e6d8b4);
+  border: 1px solid #b0904d; border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4); margin: 0 0 var(--sp-3); color: #3a2d17;
+}
+.coach.hidden { display: none; }
+.coach-h { font-weight: 700; margin-bottom: var(--sp-2); font-size: var(--fs-sm); }
+.coach-steps { margin: 0 0 var(--sp-2); padding-left: 20px; display: grid; gap: 5px; font-size: var(--fs-sm); line-height: 1.45; }
+.coach-steps b { color: #5a3d0e; }
+.coach .linkbtn { color: #6b4e12; }
+
 .ctl select {
   width: 100%; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm);
   border: 1px solid var(--stone-300); font-size: var(--fs-base); background: var(--stone-0); color: var(--stone-800);
