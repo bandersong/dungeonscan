@@ -106,6 +106,14 @@
     }
     s = Math.max(lo, Math.min(Math.round(Math.min(W, H) / 4), s));
 
+    // Octave tiebreak from a model cell-size hint (GridNet): pixel heuristics can
+    // lock onto half/double the true pitch (a faint sub-grid, a bold background
+    // grid). If a hint is given, snap s to whichever of ½s / s / 2s is closest.
+    if (opts.cellHint && opts.cellHint > lo) {
+      const h = opts.cellHint, cands = [s * 0.5, s, s * 2].filter((v) => v >= lo);
+      s = Math.round(cands.reduce((a, b) => Math.abs(b - h) < Math.abs(a - h) ? b : a));
+    }
+
     // phase: align the comb to the actual strong lines at the chosen scale
     const cP = findPeaks(cS, Math.round(s * 0.55), FR);
     const rP = findPeaks(rS, Math.round(s * 0.55), FR);

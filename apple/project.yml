@@ -43,6 +43,7 @@ targets:
           # Bundled below as explicit resources (folder ref / plain file).
           - DungeonCellClassifier.mlmodelc
           - TerrainClassifier.mlmodelc
+          - GridNet.mlmodelc
           - labels.json
           - terrain_labels.json
           - AppIcon.icns
@@ -60,6 +61,12 @@ targets:
       # model. Lands at Contents/Resources/TerrainClassifier.mlmodelc. Picked by
       # name in NativeBridge.classify (model:"TerrainClassifier").
       - path: DungeonScan/TerrainClassifier.mlmodelc
+        buildPhase: resources
+        type: folder
+      # CoreML GridNet — image -> 4 grid corners + cell size. Rectifies rotation +
+      # perspective and gives a cell-size prior the pixel detector can't (octave).
+      # Loaded by name "GridNet" in NativeBridge.predictGrid.
+      - path: DungeonScan/GridNet.mlmodelc
         buildPhase: resources
         type: folder
       # Class-label vocabularies shipped next to their models.
