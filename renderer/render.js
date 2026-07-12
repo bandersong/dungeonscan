@@ -191,9 +191,31 @@
     }
   }
 
+  // Resolve the grid stroke style for an export. The look defaults to the
+  // style palette's `grid` colour; the user may override the colour, the
+  // opacity, or both from the step-5 "Grid on export" controls. Pure — kept on
+  // DS so the option plumbing is testable headlessly.
+  function resolveGridStyle(st, opts) {
+    opts = opts || {};
+    if (opts.gridColor) {
+      var rgb = hexToRgb(opts.gridColor);
+      var a = (opts.gridOpacity != null) ? opts.gridOpacity : 1;
+      return rgbCss(rgb, a);
+    }
+    if (opts.gridOpacity != null) {
+      // swap the alpha of the palette's rgba() grid colour
+      var m = /rgba?\(([^)]+)\)/.exec(st.grid || '');
+      if (m) {
+        var p = m[1].split(',').map(function (s) { return s.trim(); });
+        return 'rgba(' + p[0] + ',' + p[1] + ',' + p[2] + ',' + opts.gridOpacity + ')';
+      }
+    }
+    return st.grid;
+  }
+
   // ---------- grid (confined to floor cells, so margins stay clean) ----------
-  function drawGrid(ctx, floor, C, R, ppg, st) {
-    ctx.strokeStyle = st.grid; ctx.lineWidth = Math.max(1, ppg / 60); ctx.lineCap = 'butt';
+  function drawGrid(ctx, floor, C, R, ppg, gridStyle) {
+    ctx.strokeStyle = gridStyle; ctx.lineWidth = Math.max(1, ppg / 60); ctx.lineCap = 'butt';
     var c, r;
     for (c = 0; c <= C; c++) {
       for (r = 0; r < R; r++) {
@@ -444,6 +466,10 @@
     var wallRgb = hexToRgb(st.wall);
     var floorLum = luma(floorRgb);
     var noise = texture === 'cave' ? makeValueNoise(0x9e3779b9) : null;
+    // Grid-on-export controls (step 5). Default keeps the existing look: grid on,
+    // palette colour. showGrid:false skips the grid pass entirely.
+    var showGrid = opts.showGrid !== false;
+    var gridStyle = resolveGridStyle(st, opts);
 
     // void
     ctx.fillStyle = st.void; ctx.fillRect(0, 0, W, H);
@@ -466,8 +492,8 @@
       }
     }
 
-    // grid over floor
-    drawGrid(ctx, floor, C, R, ppg, st);
+    // grid over floor (skipped when "Grid on export" is off)
+    if (showGrid) drawGrid(ctx, floor, C, R, ppg, gridStyle);
 
     // walls (door edges are skipped so they read as openings)
     drawWalls(ctx, walls, doors, C, R, ppg, st, styleId, wallStyle, floorLum, wallRgb);
@@ -513,6 +539,7 @@
   window.DS = window.DS || {};
   Object.assign(window.DS, {
     renderBattleMap: renderBattleMap,
+    resolveGridStyle: resolveGridStyle,
     STYLES: STYLES,
     RENDER_STYLES: RENDER_STYLES,
     FLOOR_TEXTURES: FLOOR_TEXTURES,

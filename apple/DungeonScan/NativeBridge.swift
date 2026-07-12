@@ -30,6 +30,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
         switch cmd {
         case "openImage":    openImage(replyHandler)
+        case "openProject":  openProject(replyHandler)
         case "saveFile":     saveFile(dict, replyHandler)
         case "ocr":          ocr(dict, replyHandler)
         case "classify":     classify(dict, replyHandler)
@@ -67,6 +68,27 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
     }
 
+    /// {cmd:"openProject"} -> NSOpenPanel (.dungeonscan / .json) -> {name, text}.
+    /// Reads the file as UTF-8 text and hands it back to the JS layer, which
+    /// DS.project.deserialize parses back into full working state. {} on cancel.
+    private func openProject(_ reply: @escaping (Any?, String?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [UTType.json,
+                                     UTType(filenameExtension: "dungeonscan") ?? UTType.plainText]
+        panel.prompt = "Open project"
+
+        guard panel.runModal() == .OK, let url = panel.url else { reply([:], nil); return }
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            reply(["name": url.lastPathComponent, "text": text], nil)
+        } catch {
+            reply(nil, "DungeonScan: could not read project — \(error.localizedDescription)")
+        }
+    }
+
     /// {cmd:"saveFile", suggestedName, kind ("png"|"vtt"|"json"), dataUrl?, text?}
     /// -> NSSavePanel -> write. PNG is written from the base64 dataUrl; vtt/json
     /// from `text`. Persists a security-scoped bookmark to the chosen URL so a
@@ -100,7 +122,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
                     reply(nil, "DungeonScan: saveFile png needs a dataUrl"); return
                 }
                 try png.write(to: url)
-            case "vtt", "json", "txt":
+            case "vtt", "json", "txt", "dungeonscan":
                 guard let text = p["text"] as? String else {
                     reply(nil, "DungeonScan: saveFile \(kind) needs text"); return
                 }
@@ -153,14 +175,16 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
     }
 
     /// {cmd:"classify", crops:[dataURL...], model?} -> run VNCoreMLRequest on
-    /// each crop via the bundled CoreML model
-    /// (Resources/DungeonCellClassifier.mlmodelc, or .mlmodel compiled on the
-    /// fly) -> [{label, confidence}]. If no model is bundled yet, every crop
-    /// gets {label:"unknown", confidence:0} — graceful, not an error.
+    /// each crop via the bundled CoreML model named by `model`
+    /// ("TerrainClassifier" -> Resources/TerrainClassifier.mlmodelc, otherwise
+    /// Resources/DungeonCellClassifier.mlmodelc; either may be a source .mlmodel
+    /// compiled on the fly) -> [{label, confidence}]. If that model isn't bundled
+    /// yet, every crop gets {label:"unknown", confidence:0} — graceful, not an error.
     private func classify(_ p: [String: Any], _ reply: @escaping (Any?, String?) -> Void) {
         let crops = (p["crops"] as? [String]) ?? []
+        let modelName = (p["model"] as? String) ?? "DungeonCellClassifier"
 
-        guard let model = self.coreMLModel else {
+        guard let model = self.model(named: modelName) else {
             reply(crops.map { _ in ["label": "unknown", "confidence": 0.0] as [String: Any] }, nil)
             return
         }
@@ -245,7 +269,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
     private func capabilities() -> [String: Any] {
         return [
             "ocr": true,
-            "classify": coreMLModel != nil,
+            "classify": model(named: "DungeonCellClassifier") != nil,
+            "terrain": model(named: "TerrainClassifier") != nil,
             // Optional local vision-LLM (Ollama, Developer-ID build only).
             // Probed synchronously with a 1s timeout — resolves in a few ms
             // when ollama serve is up, ~1s otherwise.
@@ -253,26 +278,34 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
         ]
     }
 
-    // MARK: - CoreML model (loaded once)
+    // MARK: - CoreML models (loaded once, cached by name)
 
-    /// Lazily load the bundled classifier as a VNCoreMLModel. Accepts a
-    /// pre-compiled .mlmodelc, or a source .mlmodel (compiled at runtime). nil
-    /// when no model is bundled yet — callers fall back gracefully.
-    private lazy var coreMLModel: VNCoreMLModel? = {
+    /// Cache of bundled classifiers keyed by base resource name
+    /// ("DungeonCellClassifier", "TerrainClassifier"). Both ship in Resources.
+    private var _modelCache: [String: VNCoreMLModel] = [:]
+
+    /// Resolve a bundled classifier by its base resource name, caching the
+    /// loaded VNCoreMLModel. Accepts a pre-compiled .mlmodelc, or a source
+    /// .mlmodel (compiled at runtime). nil when the named model isn't bundled —
+    /// callers fall back gracefully.
+    private func model(named name: String) -> VNCoreMLModel? {
+        if let cached = _modelCache[name] { return cached }
         let b = Bundle.main
-        if let url = b.url(forResource: "DungeonCellClassifier", withExtension: "mlmodelc"),
+        if let url = b.url(forResource: name, withExtension: "mlmodelc"),
            let ml = try? MLModel(contentsOf: url),
            let vm = try? VNCoreMLModel(for: ml) {
+            _modelCache[name] = vm
             return vm
         }
-        if let url = b.url(forResource: "DungeonCellClassifier", withExtension: "mlmodel"),
+        if let url = b.url(forResource: name, withExtension: "mlmodel"),
            let compiled = try? MLModel.compileModel(at: url),
            let ml = try? MLModel(contentsOf: compiled),
            let vm = try? VNCoreMLModel(for: ml) {
+            _modelCache[name] = vm
             return vm
         }
         return nil
-    }()
+    }
 
     // MARK: - JS shim
 
@@ -286,6 +319,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
       }
       window.native = {
         openImage:    function ()             { return call({ cmd: 'openImage' }); },
+        openProject:  function ()             { return call({ cmd: 'openProject' }); },
         saveFile:     function (o)            { return call(Object.assign({ cmd: 'saveFile' }, o || {})); },
         ocr:          function (image)        { return call({ cmd: 'ocr', image: image }); },
         classify:     function (crops, model) { return call({ cmd: 'classify', crops: crops, model: model }); },
@@ -309,11 +343,12 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     private func uttype(for kind: String) -> [UTType] {
         switch kind {
-        case "png":  return [.png]
-        case "json": return [UTType.json]
-        case "vtt":  return [UTType(filenameExtension: "vtt") ?? .plainText]
-        case "txt":  return [UTType.plainText]
-        default:     return [.data]
+        case "png":         return [.png]
+        case "json":        return [UTType.json]
+        case "vtt":         return [UTType(filenameExtension: "vtt") ?? .plainText]
+        case "txt":         return [UTType.plainText]
+        case "dungeonscan": return [UTType(filenameExtension: "dungeonscan") ?? UTType.json]
+        default:            return [.data]
         }
     }
 

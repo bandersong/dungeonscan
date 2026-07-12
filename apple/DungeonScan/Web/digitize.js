@@ -216,6 +216,43 @@
     return doors;
   }
 
+  // ---- room numbering: label each enclosed floor region 1,2,… in reading order
+  //
+  // Flood-fill the floor lattice the same way detectFloor seeds the exterior, but
+  // here every disconnected floor region (cells joined through non-wall edges) is a
+  // "room". Regions smaller than minSize (default 2) are ignored — a stray floor
+  // speck isn't a room. Each surviving region is labelled at its cell centroid,
+  // and regions are numbered top-to-bottom, left-to-right (reading order) by
+  // centroid, so the labels read naturally down the map.
+  function numberRooms(walls, floor, C, R, opts) {
+    opts = opts || {};
+    const minSize = opts.minSize != null ? opts.minSize : 2;
+    const vEdge = walls.vEdge, hEdge = walls.hEdge;
+    const seen = new Uint8Array(C * R);
+    const rooms = [];
+    for (let seed = 0; seed < C * R; seed++) {
+      if (seen[seed] || !floor[seed]) continue;
+      // collect the connected region around this seed (through open edges only)
+      const region = [];
+      const stack = [seed]; seen[seed] = 1;
+      while (stack.length) {
+        const idx = stack.pop(), r = (idx / C) | 0, c = idx - r * C;
+        region.push(idx);
+        if (c > 0 && !vEdge[r][c] && floor[idx - 1] && !seen[idx - 1]) { seen[idx - 1] = 1; stack.push(idx - 1); }
+        if (c < C - 1 && !vEdge[r][c + 1] && floor[idx + 1] && !seen[idx + 1]) { seen[idx + 1] = 1; stack.push(idx + 1); }
+        if (r > 0 && !hEdge[r][c] && floor[idx - C] && !seen[idx - C]) { seen[idx - C] = 1; stack.push(idx - C); }
+        if (r < R - 1 && !hEdge[r + 1][c] && floor[idx + C] && !seen[idx + C]) { seen[idx + C] = 1; stack.push(idx + C); }
+      }
+      if (region.length < minSize) continue;
+      let sx = 0, sy = 0;
+      for (const idx of region) { const r = (idx / C) | 0, c = idx - r * C; sx += c; sy += r; }
+      rooms.push({ col: Math.round(sx / region.length), row: Math.round(sy / region.length) });
+    }
+    // reading order: sort by centroid row then column
+    rooms.sort((a, b) => (a.row - b.row) || (a.col - b.col));
+    return rooms.map((p, i) => ({ kind: 'number', label: String(i + 1), col: p.col, row: p.row }));
+  }
+
   // ---- accuracy vs a ground-truth (for the test harness) ----
   function edgeAccuracy(walls, truth) {
     let tp = 0, fp = 0, fn = 0, tn = 0;
@@ -233,6 +270,6 @@
 
   window.DS = window.DS || {};
   Object.assign(window.DS, {
-    toGray, inkField, otsu, detectWalls, detectFloor, mergeWalls, detectDoorways, edgeAccuracy
+    toGray, inkField, otsu, detectWalls, detectFloor, mergeWalls, detectDoorways, edgeAccuracy, numberRooms
   });
 })();

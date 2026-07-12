@@ -10,7 +10,7 @@
   window.DSBridge = {
     async capabilities() {
       try { if (N() && N().capabilities) return await N().capabilities(); } catch (_) {}
-      return { ocr: false, classify: false, ollama: false, native: !!N() };
+      return { ocr: false, classify: false, terrain: false, ollama: false, native: !!N() };
     },
     async openImage() {
       if (N() && N().openImage) {
@@ -23,6 +23,26 @@
           const f = e.target.files[0]; inp.value = '';
           if (!f) return res(null);
           const rd = new FileReader(); rd.onload = () => res({ name: f.name, dataUrl: rd.result }); rd.readAsDataURL(f);
+        };
+        inp.click();
+      });
+    },
+    // Open a saved .dungeonscan / .json project as text. Native panel when the
+    // Swift bridge is present, else a hidden <input type=file> fallback.
+    async openProject() {
+      if (N() && N().openProject) {
+        try {
+          const r = await N().openProject();
+          return r && r.text ? { name: r.name || 'project.dungeonscan', text: r.text } : null;
+        } catch (e) { return null; }
+      }
+      return new Promise((res) => {
+        const inp = document.getElementById('projFile');
+        if (!inp) return res(null);
+        inp.onchange = (e) => {
+          const f = e.target.files[0]; inp.value = '';
+          if (!f) return res(null);
+          const rd = new FileReader(); rd.onload = () => res({ name: f.name, text: String(rd.result) }); rd.readAsText(f);
         };
         inp.click();
       });

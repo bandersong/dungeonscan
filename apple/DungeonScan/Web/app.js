@@ -29,7 +29,17 @@
     terrain: new Map(),             // "col,row" -> terrainId  (painted hexes)
     hexTerrain: 'plains',           // currently selected terrain brush (or 'erase')
     hexStyle: 'parchment',          // HEX_STYLES key for export
-    hexReady: false                 // hex mode: step-3 "Start painting" has been clicked
+    hexReady: false,                // hex mode: step-3 "Start painting" has been clicked
+    // export options (step 5)
+    showLegend: false,              // draw a stamp legend onto saved maps
+    gridOnExport: true,             // draw the square grid on saved maps
+    gridColor: '',                  // '' = use the style palette colour; else a hex override
+    gridOpacity: null,              // null = palette default; else 0..1 override
+    projectName: '',                // last saved/loaded .dungeonscan filename (no ext)
+    // perspective 4-corner straighten (step 2): null off, or 4 {x,y} in image px
+    corners: null,                  // [{x,y}×4] TL,TR,BR,BL while perspActive
+    perspActive: false,
+    dragCorner: null                // index of the corner being dragged, or null
   };
 
   const view = $('view'), vctx = view.getContext('2d');
@@ -55,6 +65,8 @@
     // a fresh image always returns to the default square-dungeon flow
     S.mode = 'square'; S.hexGrid = null; S.terrain = new Map();
     S.hexReady = false; S.hexTerrain = 'plains';
+    // and clears any in-progress perspective / project metadata
+    S.corners = null; S.perspActive = false; S.dragCorner = null; S.projectName = '';
     syncModeChrome();
     view.width = w; view.height = h;
     $('drop').classList.add('hidden');
@@ -73,6 +85,227 @@
     let dw = availW, dh = dw / ar; if (dh > availH) { dh = availH; dw = dh * ar; }
     view.style.width = Math.max(50, dw) + 'px'; view.style.height = Math.max(50, dh) + 'px';
   }
+  function baseName(filename) { return String(filename || '').replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, ''); }
+  function clampImg(v, max) { return v < 0 ? 0 : v > max ? max : v; }
+
+  // ---------- project save / reload ----------
+  // Snapshot the full working state into the plain object DS.project.serialize
+  // understands. terrain stays a Map here (serialize converts it).
+  function collectProjectState() {
+    return {
+      mode: S.mode,
+      image: S.work ? S.work.toDataURL('image/png') : null,
+      grid: S.grid,
+      hexGrid: S.hexGrid,
+      walls: S.walls ? { v: S.walls.vEdge.map((r) => [...r]), h: S.walls.hEdge.map((r) => [...r]), C: S.walls.C, R: S.walls.R } : null,
+      floor: S.floor ? [...S.floor] : null,
+      doors: S.doors, features: S.features, stamps: S.stamps,
+      terrain: S.terrain,
+      style: S.style, floorTexture: S.floorTexture, wallStyle: S.wallStyle,
+      hexStyle: S.hexStyle, hexTerrain: S.hexTerrain, hexReady: S.hexReady,
+      ppg: S.ppg, lineSensitivity: S.lineSensitivity, invertPaper: S.invertPaper, deskew: S.deskew,
+      showLegend: S.showLegend, gridOnExport: S.gridOnExport, gridColor: S.gridColor, gridOpacity: S.gridOpacity
+    };
+  }
+  async function saveProject() {
+    if (!S.work) { setStatus('Add a photo before saving a project.'); return; }
+    setStatus('Saving project…');
+    try {
+      const text = DS.project.serialize(collectProjectState());
+      const suggested = (S.projectName || 'dungeon') + '.dungeonscan';
+      const r = await DSBridge.saveFile({ kind: 'dungeonscan', suggestedName: suggested, text });
+      if (r && r.ok) { S.projectName = baseName(suggested); setStatus('Saved project.'); }
+      saveNote(r, 'project (.dungeonscan)');
+    } catch (e) { saveNote({ ok: false }, (e && e.message) || 'project save failed'); }
+  }
+  async function openProjectFile() {
+    setStatus('Pick a .dungeonscan project to open…');
+    const r = await DSBridge.openProject();
+    if (!r || !r.text) { setStatus('Cancelled.'); return; }
+    try {
+      const proj = DS.project.deserialize(r.text);
+      proj.name = r.name || '';
+      S.projectName = baseName(proj.name);
+      applyProject(proj);
+    } catch (e) {
+      setStatus('Could not open that project — ' + ((e && e.message) || 'invalid file.'));
+    }
+  }
+  // Restore a deserialized project: rebuild the work canvas from its embedded
+  // image (NO deskew — the saved image is already corrected), then re-seat every
+  // editable field and rebuild the UI for the restored mode.
+  function applyProject(proj) {
+    if (!proj.image) { setStatus('Project has no image.'); return; }
+    setStatus('Opening project…');
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, MAXDIM / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+      const work = document.createElement('canvas'); work.width = w; work.height = h;
+      work.getContext('2d').drawImage(img, 0, 0, w, h);
+      S.img = img; S.work = work; S.w = w; S.h = h;
+      S.gray = DS.toGray(work.getContext('2d').getImageData(0, 0, w, h));
+      // editable state
+      S.mode = proj.mode || 'square';
+      S.grid = proj.grid || S.grid;
+      S.hexGrid = proj.hexGrid || null;
+      S.walls = proj.walls ? { vEdge: proj.walls.v.map((r) => Uint8Array.from(r)), hEdge: proj.walls.h.map((r) => Uint8Array.from(r)), C: proj.walls.C, R: proj.walls.R } : null;
+      S.floor = proj.floor ? Uint8Array.from(proj.floor) : null;
+      S.doors = proj.doors || []; S.features = proj.features || []; S.stamps = proj.stamps || [];
+      S.terrain = proj.terrain instanceof Map ? proj.terrain : new Map();
+      S.style = proj.style || 'stone'; S.floorTexture = proj.floorTexture || 'flat'; S.wallStyle = proj.wallStyle || 'solid';
+      S.hexStyle = proj.hexStyle || 'parchment'; S.hexTerrain = proj.hexTerrain || 'plains'; S.hexReady = !!proj.hexReady;
+      S.ppg = proj.ppg || 80;
+      S.lineSensitivity = proj.lineSensitivity != null ? proj.lineSensitivity : 0.5;
+      S.invertPaper = !!proj.invertPaper; S.deskew = proj.deskew || 0;
+      S.showLegend = !!proj.showLegend; S.gridOnExport = proj.gridOnExport !== false;
+      S.gridColor = proj.gridColor || ''; S.gridOpacity = proj.gridOpacity != null ? proj.gridOpacity : null;
+      S.history = []; S.redo = []; S.selStamp = null; S.boxStart = S.boxCur = null;
+      S.corners = null; S.perspActive = false; S.dragCorner = null;
+      // rebuild the UI for whatever mode the project was saved in
+      view.width = w; view.height = h;
+      $('drop').classList.add('hidden');
+      hideStampBar(); hidePerspectiveBar();
+      if (S.mode === 'hex') buildHexGridControls(); else buildGridControls();
+      reflectMode();
+      unlock(2); unlock(3);
+      if (S.mode === 'hex') { if (S.hexReady) { unlock(4); unlock(5); } else { relock(4); relock(5); } }
+      else { if (S.walls) { unlock(4); unlock(5); } else { relock(4); relock(5); } }
+      updateUndoRedoButtons();
+      setStatus(`Opened ${proj.name || 'project'}.`);
+      fitView(); render();
+    };
+    img.onerror = () => setStatus('Could not read the project image.');
+    img.src = proj.image;
+  }
+
+  // ---------- perspective 4-corner straighten (step 2) ----------
+  function cornerRadius() { return Math.max(12, Math.round(Math.min(S.w, S.h) * 0.022)); }
+  function cornerAt(ix, iy) {
+    if (!S.corners) return -1;
+    const r = cornerRadius(), r2 = r * r;
+    for (let i = S.corners.length - 1; i >= 0; i--) {
+      const c = S.corners[i];
+      if ((ix - c.x) * (ix - c.x) + (iy - c.y) * (iy - c.y) <= r2) return i;
+    }
+    return -1;
+  }
+  function togglePerspective(force) {
+    if (!S.work) { setStatus('Add a photo first.'); return; }
+    const next = force != null ? force : !S.perspActive;
+    if (next === S.perspActive) return;
+    S.perspActive = next;
+    if (next) {
+      // seed the 4 corners from a best-effort page detect, clamped to the image
+      const detected = DS.perspective.autoDetectPage(S.work);
+      S.corners = detected.map((p) => ({ x: clampImg(p.x, S.w), y: clampImg(p.y, S.h) }));
+      S.dragCorner = null;
+      showPerspectiveBar();
+      setStatus('Drag the 4 corners to your paper, then Apply.');
+    } else {
+      S.corners = null; S.dragCorner = null;
+      hidePerspectiveBar();
+      setStatus('Straighten cancelled.');
+    }
+    render();
+  }
+  async function applyPerspective() {
+    if (!S.work || !S.corners) return;
+    setStatus('Straightening…');
+    await new Promise((r) => setTimeout(r, 20));
+    try {
+      const fixed = DS.perspective.correct(S.work, S.corners);
+      // re-run deskew + grayscale + grid re-estimate on the de-warped image
+      const de = DS.autoDeskew(fixed); const work = de.canvas; S.deskew = de.angle;
+      S.work = work; S.w = work.width; S.h = work.height;
+      S.gray = DS.toGray(work.getContext('2d').getImageData(0, 0, S.w, S.h));
+      view.width = S.w; view.height = S.h;
+      autoGrid(); buildGridControls();
+      if (S.walls) { S.walls = null; S.floor = null; relock(4); relock(5); } // grid moved → must re-read
+    } catch (e) {
+      setStatus('Straighten failed — try adjusting the corners.');
+    }
+    S.corners = null; S.perspActive = false; S.dragCorner = null;
+    hidePerspectiveBar();
+    fitView(); render();
+    setStatus('Straightened — re-line the grid if it shifted.');
+  }
+  function drawPerspectiveOverlay() {
+    if (!S.perspActive || !S.corners) return;
+    const cs = S.corners, r = cornerRadius();
+    vctx.save();
+    tracePts(vctx, cs);                              // quad fill + outline
+    vctx.fillStyle = 'rgba(63,138,224,0.14)'; vctx.fill();
+    vctx.strokeStyle = 'rgba(63,138,224,0.95)'; vctx.lineWidth = Math.max(2, r * 0.18); vctx.stroke();
+    vctx.restore();
+    for (let i = 0; i < cs.length; i++) {            // 4 draggable handles
+      vctx.save();
+      vctx.fillStyle = '#fff'; vctx.strokeStyle = 'rgba(63,138,224,1)'; vctx.lineWidth = Math.max(2, r * 0.16);
+      vctx.beginPath(); vctx.arc(cs[i].x, cs[i].y, r, 0, Math.PI * 2); vctx.fill(); vctx.stroke();
+      vctx.restore();
+    }
+  }
+  function buildPerspectiveBar() {
+    if ($('perspBar')) return;
+    const bar = document.createElement('div');
+    bar.id = 'perspBar'; bar.className = 'perspbar hidden';
+    bar.innerHTML = '<span class="ps-l">Drag the 4 corners to the paper</span>'
+      + '<div class="ps-btns">'
+      + '<button id="psApply" type="button" class="ps-apply">✓ Apply straighten</button>'
+      + '<button id="psCancel" type="button">✕ Cancel</button>'
+      + '</div>';
+    $('stageInner').appendChild(bar);
+    $('psApply').addEventListener('click', applyPerspective);
+    $('psCancel').addEventListener('click', () => togglePerspective(false));
+  }
+  function showPerspectiveBar() { if ($('perspBar')) $('perspBar').classList.remove('hidden'); }
+  function hidePerspectiveBar() { if ($('perspBar')) $('perspBar').classList.add('hidden'); }
+
+  // ---------- hex: auto-read terrain from the photo via CoreML ----------
+  async function readHexTerrain() {
+    if (!S.hexGrid || !S.work) return;
+    const caps = S.caps || await DSBridge.capabilities();
+    if (!caps.terrain && !caps.classify) { setStatus('Terrain model not available in this build.'); return; }
+    const btn = $('btn-hexterrain'); if (btn) btn.disabled = true;
+    pushHistory();
+    setStatus('Reading terrain from the photo…');
+    await new Promise((r) => setTimeout(r, 20));
+    const g = S.hexGrid, cells = [];
+    for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) cells.push({ col: c, row: r });
+    // crop each hex's bounding box (DS.hex.hexBBox) to a 64×64 dataURL
+    const crops = cells.map((cell) => {
+      const b = DS.hex.hexBBox(cell.col, cell.row, g);
+      const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
+      cv.getContext('2d').drawImage(S.work, b.x, b.y, b.w, b.h, 0, 0, 64, 64);
+      return cv.toDataURL('image/png');
+    });
+    let painted = 0;
+    try {
+      const labels = await DSBridge.classify(crops, 'TerrainClassifier');
+      cells.forEach((cell, i) => {
+        const L = labels[i]; if (!L || L.confidence < 0.5) return;
+        const id = L.label;
+        if (!DS.hex.TERRAIN_BY_ID[id]) return;        // ignore unknown labels
+        S.terrain.set(cell.col + ',' + cell.row, id); painted++;
+      });
+    } catch (_) { setStatus('Terrain read failed this time.'); }
+    if (btn) btn.disabled = false;
+    setStatus(painted ? `Painted ${painted} hexes — brush-correct any in step 4.`
+      : 'No confident terrain found — paint it by hand in step 4.');
+    render();
+  }
+
+  // ---------- square: auto-number rooms ----------
+  function numberRoomsAction() {
+    if (S.mode !== 'square' || !S.walls || !S.floor) { setStatus('Read the dungeon first.'); return; }
+    pushHistory();
+    const nums = DS.numberRooms(S.walls, S.floor, S.grid.C, S.grid.R);
+    // keep non-number features, replace the auto-numbers
+    S.features = S.features.filter((f) => f.kind !== 'number').concat(nums);
+    setStatus(nums.length ? `Numbered ${nums.length} rooms.` : 'No enclosed rooms found — mark some floor first.');
+    render();
+  }
+
 
   // ---------- grid ----------
   function autoGrid() {
@@ -143,6 +376,15 @@
     syncModeChrome();
     if (S.mode === 'hex') buildHexTools(); else buildTools();
     buildExportControls();
+    reflectFeatureButtons();
+  }
+  // Show the hex "Read terrain" button only in hex mode w/ a model, and the
+  // square "Number rooms" button only in square mode.
+  function reflectFeatureButtons() {
+    const hexBtn = $('btn-hexterrain'), numBtn = $('btn-number');
+    const terrainOk = !!(S.caps && (S.caps.terrain || S.caps.classify));
+    if (hexBtn) hexBtn.classList.toggle('hidden', !(S.mode === 'hex' && terrainOk));
+    if (numBtn) numBtn.classList.toggle('hidden', S.mode !== 'square');
   }
   function syncStepGating() {
     unlock(3);
@@ -515,9 +757,15 @@
     if (erase) S.terrain.delete(key); else S.terrain.set(key, S.hexTerrain);
   }
   view.addEventListener('pointerdown', (ev) => {
+    const p = toImg(ev);
+    // perspective corner-dragging swallows all stage input while active
+    if (S.perspActive) {
+      const ci = cornerAt(p.x, p.y);
+      if (ci >= 0) { painting = true; view.setPointerCapture(ev.pointerId); S.dragCorner = ci; }
+      return;
+    }
     if (!editReady()) return;
     painting = true; view.setPointerCapture(ev.pointerId);
-    const p = toImg(ev);
     // stamps take priority: click one to select & drag it
     const si = stampAt(p.x, p.y);
     if (si >= 0) {
@@ -545,6 +793,10 @@
   view.addEventListener('pointermove', (ev) => {
     if (!painting) return;
     const p = toImg(ev);
+    if (S.perspActive && S.dragCorner != null && S.corners) {
+      S.corners[S.dragCorner] = { x: clampImg(p.x, S.w), y: clampImg(p.y, S.h) };
+      render(); return;
+    }
     if (S.dragStamp && S.selStamp != null) {
       const st = S.stamps[S.selStamp];
       const b = contentBox();
@@ -565,6 +817,7 @@
   view.addEventListener('pointerup', () => {
     if (S.tool === 'roombox' && S.boxStart && S.boxCur) { commitRoomBox(); S.boxStart = S.boxCur = null; render(); }
     S.dragStamp = false; S.dragOff = null;
+    S.dragCorner = null;
     painting = false;
   });
   // right-click is an erase stroke in hex mode — suppress the browser menu
@@ -574,7 +827,7 @@
   function render() {
     vctx.clearRect(0, 0, view.width, view.height);
     if (S.work) vctx.drawImage(S.work, 0, 0);
-    if (S.mode === 'hex') return renderHexOverlay();
+    if (S.mode === 'hex') { renderHexOverlay(); drawPerspectiveOverlay(); return; }
     const { s, ox, oy, C, R } = S.grid;
     // grid overlay (dim once read, bright while locking)
     vctx.strokeStyle = S.walls ? 'rgba(63,138,224,0.20)' : 'rgba(63,138,224,0.7)';
@@ -627,6 +880,7 @@
       vctx.strokeRect(ox + c0 * s, oy + r0 * s, (c1 - c0 + 1) * s, (r1 - r0 + 1) * s);
       vctx.restore();
     }
+    drawPerspectiveOverlay();
   }
   // hex overlay: photo (already drawn) + painted terrain hexes (semi-transparent)
   // + hex grid lines + stamps. Grid is bright while locking, dim once painting.
@@ -680,6 +934,46 @@
     [[70, 'Roll20 (70)'], [80, 'Standard (80)'], [100, 'Foundry (100)'], [140, 'Print (140)']].forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; ps.appendChild(o); });
     ps.value = S.ppg; ps.addEventListener('change', () => { S.ppg = Number(ps.value); });
     p.appendChild(ps); el.appendChild(p);
+    buildExportOptions(el, true);
+  }
+  // Legend + grid-on-export controls (step 5). `withGrid` false for hex maps,
+  // which have no square grid to toggle.
+  function buildExportOptions(el, withGrid) {
+    const wrap = document.createElement('div'); wrap.className = 'ctl export-opts';
+    const legLabel = document.createElement('label'); legLabel.className = 'check';
+    legLabel.innerHTML = '<input type="checkbox"' + (S.showLegend ? ' checked' : '') + '/> Show legend (placed symbols)';
+    legLabel.querySelector('input').addEventListener('change', (e) => { S.showLegend = e.target.checked; });
+    wrap.appendChild(legLabel);
+    if (withGrid) {
+      const gridLabel = document.createElement('label'); gridLabel.className = 'check';
+      gridLabel.innerHTML = '<input type="checkbox"' + (S.gridOnExport ? ' checked' : '') + '/> Grid on export';
+      gridLabel.querySelector('input').addEventListener('change', (e) => { S.gridOnExport = e.target.checked; });
+      wrap.appendChild(gridLabel);
+      // grid color override (color picker + "custom" toggle)
+      const colorRow = document.createElement('div'); colorRow.className = 'grid-color-row';
+      colorRow.innerHTML = '<label class="check"><input type="checkbox"' + (S.gridColor ? ' checked' : '') + '/> Custom grid color</label>'
+        + '<input type="color" value="' + (S.gridColor || '#3c321e') + '"/>';
+      const [cChk, cInp] = colorRow.querySelectorAll('input');
+      cChk.addEventListener('change', () => { S.gridColor = cChk.checked ? cInp.value : ''; });
+      cInp.addEventListener('input', () => { if (cChk.checked) S.gridColor = cInp.value; });
+      wrap.appendChild(colorRow);
+      // grid opacity override (range + "custom" toggle)
+      const opRow = document.createElement('div'); opRow.className = 'grid-opacity-row';
+      const opLbl = document.createElement('label');
+      opLbl.innerHTML = '<span>Grid opacity</span><span class="v"></span>';
+      const opInp = document.createElement('input'); opInp.type = 'range'; opInp.min = '0'; opInp.max = '100'; opInp.step = '5';
+      opInp.value = S.gridOpacity != null ? Math.round(S.gridOpacity * 100) : 60;
+      const opVal = opLbl.querySelector('.v');
+      const opChk = document.createElement('label'); opChk.className = 'check sub';
+      opChk.innerHTML = '<input type="checkbox"' + (S.gridOpacity != null ? ' checked' : '') + '/> custom';
+      const reflectOp = () => { opVal.textContent = S.gridOpacity != null ? Math.round(S.gridOpacity * 100) + '%' : 'style'; };
+      opChk.querySelector('input').addEventListener('change', (e) => { S.gridOpacity = e.target.checked ? Number(opInp.value) / 100 : null; reflectOp(); });
+      opInp.addEventListener('input', () => { if (opChk.querySelector('input').checked) { S.gridOpacity = Number(opInp.value) / 100; reflectOp(); } });
+      reflectOp();
+      opRow.appendChild(opLbl); opRow.appendChild(opInp); opRow.appendChild(opChk);
+      wrap.appendChild(opRow);
+    }
+    el.appendChild(wrap);
   }
   // hex export controls: just a hex map style + pixels-per-hex. Floor texture /
   // wall style don't apply (hex maps have no walls).
@@ -700,23 +994,31 @@
     [[48, 'Skirmish (48)'], [64, 'Standard (64)'], [80, 'Detailed (80)'], [100, 'Print (100)']].forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; ps.appendChild(o); });
     ps.value = S.ppg; ps.addEventListener('change', () => { S.ppg = Number(ps.value); });
     p.appendChild(ps); el.appendChild(p);
+    buildExportOptions(el, false);   // hex: legend only, no square-grid toggle
   }
   // Clean battle-map canvas (the base for every image/PDF/VTT export). Stamps are
   // drawn onto it too, so saved PNG/PDF/VTT-image all include them.
   async function cleanCanvas() {
+    const drawLegendIfOn = (c) => {
+      if (S.showLegend && S.stamps && S.stamps.length) {
+        DS.stamps.drawLegend(c.getContext('2d'), S.stamps, { ppg: S.ppg, W: c.width, H: c.height });
+      }
+    };
     if (S.mode === 'hex') {
       const c = DS.hex.renderHexMap({ grid: S.hexGrid, terrain: S.terrain, features: S.features, ppg: S.ppg, style: S.hexStyle });
       if (S.stamps && S.stamps.length) {
         await DS.stamps.ensureLoaded(S.stamps);
         DS.stamps.draw(c.getContext('2d'), S.stamps, { W: c.width, H: c.height });
       }
+      drawLegendIfOn(c);
       return c;
     }
-    const c = DS.renderBattleMap({ walls: S.walls, floor: S.floor, doors: S.doors, C: S.grid.C, R: S.grid.R, ppg: S.ppg, style: S.style, floorTexture: S.floorTexture, wallStyle: S.wallStyle, features: S.features });
+    const c = DS.renderBattleMap({ walls: S.walls, floor: S.floor, doors: S.doors, C: S.grid.C, R: S.grid.R, ppg: S.ppg, style: S.style, floorTexture: S.floorTexture, wallStyle: S.wallStyle, features: S.features, showGrid: S.gridOnExport, gridColor: S.gridColor || undefined, gridOpacity: S.gridOpacity != null ? S.gridOpacity : undefined });
     if (S.stamps && S.stamps.length) {
       await DS.stamps.ensureLoaded(S.stamps);
       DS.stamps.draw(c.getContext('2d'), S.stamps, { W: c.width, H: c.height });
     }
+    drawLegendIfOn(c);
     return c;
   }
   // grid dimensions for the active mode — squares use {C,R}, hex uses {cols,rows}
@@ -921,7 +1223,7 @@
       const d = document.createElement('div'); d.className = 's';
       const c = document.createElement('canvas'); c.width = 120; c.height = 52;
       const im = new Image(); im.onload = () => { const x = c.getContext('2d'); const sc = Math.min(c.width / im.width, c.height / im.height); x.drawImage(im, 0, 0, im.width * sc, im.height * sc); }; im.src = sp.dataUrl;
-      d.appendChild(c); const lab = document.createElement('div'); lab.textContent = sp.name; lab.style.fontSize = '11px'; lab.style.color = '#5f6f7d'; d.appendChild(lab);
+      d.appendChild(c); const lab = document.createElement('div'); lab.textContent = sp.name; lab.style.fontSize = '11px'; lab.style.color = 'var(--stone-600)'; d.appendChild(lab);
       d.addEventListener('click', () => loadDataUrl(sp.dataUrl, sp.name + ' (sample)'));
       el.appendChild(d);
     });
@@ -931,6 +1233,7 @@
     [3, 4, 5].forEach(relock); relock(2);
     buildSamples();
     buildStampBar();
+    buildPerspectiveBar();
     buildStampPalette();
     buildExportFormatSelect();
     updateUndoRedoButtons();
@@ -960,6 +1263,11 @@
 
     $('btn-save').addEventListener('click', saveMap);
     $('btn-roomkey').addEventListener('click', saveRoomKey);
+    $('btn-saveproj').addEventListener('click', saveProject);
+    $('btn-openproj').addEventListener('click', openProjectFile);
+    $('btn-persp').addEventListener('click', () => togglePerspective());
+    $('btn-hexterrain').addEventListener('click', readHexTerrain);
+    $('btn-number').addEventListener('click', numberRoomsAction);
     $('btn-undo').addEventListener('click', undo);
     $('btn-redo').addEventListener('click', redo);
     $('btn-help').addEventListener('click', () => $('help').classList.remove('hidden'));
@@ -977,14 +1285,16 @@
       }
     });
     const caps = await DSBridge.capabilities();
-    $('capBadge').textContent = '● offline · on-device' + (caps.ocr ? ' · text ✓' : '') + (caps.classify ? ' · symbols ✓' : '') + (caps.ollama ? ' · AI ✓' : '');
+    S.caps = caps;
+    $('capBadge').textContent = '● offline · on-device' + (caps.ocr ? ' · text ✓' : '') + (caps.classify ? ' · symbols ✓' : '') + (caps.terrain ? ' · terrain ✓' : '') + (caps.ollama ? ' · AI ✓' : '');
+    reflectFeatureButtons();   // terrain-button visibility depends on caps
     // optional local-VLM "smart read" — only in the Developer-ID build with Ollama
     if (caps.ollama) {
       const body = document.querySelector('.step[data-step="5"] .sbody');
-      const b = document.createElement('button'); b.id = 'btn-smart'; b.className = 'primary wide'; b.textContent = '🧠 AI room notes (local)'; b.style.marginTop = '4px';
+      const b = document.createElement('button'); b.id = 'btn-smart'; b.className = 'primary wide'; b.textContent = '🧠 AI room notes (local)'; b.style.marginTop = 'var(--sp-3)';
       b.addEventListener('click', smartRead);
       const box = document.createElement('pre'); box.id = 'notesBox'; box.className = 'notesbox hidden';
-      const save = document.createElement('button'); save.id = 'btn-notes'; save.className = 'save wide hidden'; save.textContent = '📝 Save AI notes (.txt)'; save.style.background = 'linear-gradient(180deg,#c98a3a,#a8701f)';
+      const save = document.createElement('button'); save.id = 'btn-notes'; save.className = 'save wide hidden ai'; save.textContent = '📝 Save AI notes (.txt)';
       save.addEventListener('click', saveNotes);
       body.appendChild(b); body.appendChild(box); body.appendChild(save);
     }

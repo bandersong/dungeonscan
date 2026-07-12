@@ -48,6 +48,17 @@
     return hexCornersAt(c.x, c.y, grid.size);
   }
 
+  // Axis-aligned bounding box (source px) of a hex polygon — the crop window the
+  // terrain classifier samples per hex.
+  function hexBBox(col, row, grid) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of hexPolygon(col, row, grid)) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+    return { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+  }
+
   // round fractional axial (qf,rf) to the nearest hex via cube coords
   function hexRound(qf, rf) {
     const sf = -qf - rf;
@@ -165,14 +176,19 @@
   // --------------------------------------------------------------- terrains
 
   const TERRAINS = [
-    { id: 'plains',    name: 'Plains',    color: '#a3b673', accent: '#7d9248' },
-    { id: 'forest',    name: 'Forest',    color: '#4f7a3a', accent: '#2f5526' },
-    { id: 'hills',     name: 'Hills',     color: '#b6a673', accent: '#8a7a4a' },
-    { id: 'mountains', name: 'Mountains', color: '#9a958f', accent: '#5d5852' },
-    { id: 'water',     name: 'Water',     color: '#3f6ea8', accent: '#9fc0e4' },
-    { id: 'swamp',     name: 'Swamp',     color: '#5f6f48', accent: '#3c4830' },
-    { id: 'desert',    name: 'Desert',    color: '#dbc784', accent: '#b59f5e' },
-    { id: 'road',      name: 'Road',      color: '#b08a68', accent: '#7a5a3e' }
+    { id: 'plains',    name: 'Plains',    color: '#a9c071', accent: '#6f8f44' },
+    { id: 'forest',    name: 'Forest',    color: '#4a7a39', accent: '#24411c' },
+    { id: 'hills',     name: 'Hills',     color: '#b3a766', accent: '#7d7444' },
+    { id: 'mountains', name: 'Mountains', color: '#8f887d', accent: '#534d45' },
+    { id: 'water',     name: 'Water',     color: '#3f6ea8', accent: '#b6d2ef' },
+    { id: 'swamp',     name: 'Swamp',     color: '#5d6c45', accent: '#323a26' },
+    { id: 'desert',    name: 'Desert',    color: '#dcc680', accent: '#b09a55' },
+    { id: 'road',      name: 'Road',      color: '#b18a66', accent: '#6f4f33' },
+    { id: 'jungle',    name: 'Jungle',    color: '#2f5d28', accent: '#15300f' },
+    { id: 'tundra',    name: 'Tundra',    color: '#bcc8ca', accent: '#7e8d92' },
+    { id: 'coast',     name: 'Coast',     color: '#cdbb8e', accent: '#3f6ea8' },
+    { id: 'town',      name: 'Town',      color: '#9b948a', accent: '#4d463f' },
+    { id: 'ruins',     name: 'Ruins',     color: '#aaa39a', accent: '#4d4640' }
   ];
   const TERRAIN_BY_ID = {};
   for (const t of TERRAINS) TERRAIN_BY_ID[t.id] = t;
@@ -199,48 +215,141 @@
     ctx.closePath();
   }
 
-  // simple, cheap per-terrain texture, scaled to hex circumradius S
-  function drawTexture(id, accent, ctx, cx, cy, S, col, row) {
+  // hand-drawn per-terrain glyph, scaled to circumradius S. Deterministic jitter
+  // (hash) keeps a re-render pixel-stable; round caps + jittered quadratic
+  // mid-points give the strokes a sketched, non-mechanical feel instead of clip-art.
+  function drawGlyph(t, ctx, cx, cy, S, col, row) {
     if (S < 9) return;
     const rnd = (i) => hash(col, row, i);
+    const wob = (i, mag) => (rnd(i) * 2 - 1) * mag; // deterministic jitter in ±mag
+    const ink = t.accent;
     ctx.save();
-    ctx.fillStyle = accent; ctx.strokeStyle = accent;
-    const line = (x0, y0, x1, y1) => { ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); };
+    ctx.fillStyle = ink; ctx.strokeStyle = ink;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
     const dot = (x, y, r) => { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); };
-    switch (id) {
-      case 'plains': // grass tufts
-        ctx.lineWidth = Math.max(1, S * 0.06);
-        for (let i = 0; i < 6; i++) { const a = rnd(i) * 6.283, r = S * 0.55 * rnd(i + 10), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r; line(x, y, x, y - S * 0.16); }
+    // a slightly bent stroke — straight line bent through a jittered mid-control
+    const handLine = (x0, y0, x1, y1, lw, seed) => {
+      ctx.lineWidth = lw;
+      const mx = (x0 + x1) / 2 + wob(seed, S * 0.03);
+      const my = (y0 + y1) / 2 + wob(seed + 1, S * 0.03);
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo(mx, my, x1, y1); ctx.stroke();
+    };
+    // two-tier conifer: tiny trunk + layered triangular crown, leaned off true
+    const pine = (x, baseY, h, lean) => {
+      const w = h * 0.55;
+      ctx.fillRect(x - w * 0.08, baseY - h * 0.14, w * 0.16, h * 0.18); // trunk
+      ctx.beginPath();
+      ctx.moveTo(x + lean, baseY - h);
+      ctx.lineTo(x - w * 0.45, baseY - h * 0.55);
+      ctx.lineTo(x - w * 0.22, baseY - h * 0.55);
+      ctx.lineTo(x - w * 0.55, baseY - h * 0.10);
+      ctx.lineTo(x + w * 0.55, baseY - h * 0.10);
+      ctx.lineTo(x + w * 0.22, baseY - h * 0.55);
+      ctx.lineTo(x + w * 0.45, baseY - h * 0.55);
+      ctx.closePath(); ctx.fill();
+    };
+
+    switch (t.id) {
+      case 'plains': // sparse grass tufts (two short blades each)
+        for (let i = 0; i < 4; i++) {
+          const a = rnd(i) * 6.283, r = S * 0.5 * rnd(i + 10), bx = cx + Math.cos(a) * r, by = cy + Math.sin(a) * r;
+          const lw = Math.max(1, S * 0.05);
+          handLine(bx, by, bx - S * 0.07 + wob(i + 2, S * 0.03), by - S * 0.16, lw, i * 3);
+          handLine(bx, by, bx + S * 0.07 + wob(i + 5, S * 0.03), by - S * 0.16, lw, i * 3 + 1);
+        }
         break;
-      case 'forest': // little conifers
-        for (let i = 0; i < 5; i++) { const a = rnd(i) * 6.283, r = S * 0.5 * rnd(i + 10), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r, h = S * 0.34;
-          ctx.beginPath(); ctx.moveTo(x, y - h * 0.6); ctx.lineTo(x - h * 0.18, y + h * 0.2); ctx.lineTo(x + h * 0.18, y + h * 0.2); ctx.closePath(); ctx.fill(); }
+      case 'forest': // cluster of small conifers
+        for (let i = 0; i < 4; i++) {
+          const a = rnd(i) * 6.283, r = S * 0.42 * (0.3 + 0.55 * rnd(i + 10)), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r + S * 0.12;
+          pine(x, y, S * 0.30, wob(i, S * 0.04));
+        }
         break;
-      case 'hills': // arc bumps
-        ctx.lineWidth = Math.max(1.2, S * 0.09);
-        for (let i = 0; i < 3; i++) { const a = rnd(i) * 6.283, r = S * 0.45 * rnd(i + 10), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
-          ctx.beginPath(); ctx.arc(x, y, S * 0.22, 3.613, 5.812); ctx.stroke(); }
+      case 'hills': // rounded bumps — nested topographic contour arcs
+        ctx.lineWidth = Math.max(1.1, S * 0.05);
+        for (let i = 0; i < 2; i++) {
+          const a = rnd(i) * 6.283, r = S * 0.32 * rnd(i + 10), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+          for (let k = 0; k < 2; k++) { ctx.beginPath(); ctx.arc(x, y, S * (0.13 + k * 0.08), 3.613, 5.812); ctx.stroke(); }
+        }
         break;
-      case 'mountains': // twin peaks
-        for (let i = 0; i < 2; i++) { const x = cx + (i ? S * 0.22 : -S * 0.22), y = cy + S * 0.05, h = S * 0.5;
-          ctx.beginPath(); ctx.moveTo(x, y + h * 0.3); ctx.lineTo(x, y - h * 0.5); ctx.lineTo(x + h * 0.3, y + h * 0.3); ctx.closePath(); ctx.fill(); }
+      case 'mountains': // twin peaks ^^^ with knobby ridges + snow caps
+        for (let i = 0; i < 2; i++) {
+          const x = cx + (i ? S * 0.26 : -S * 0.26), baseY = cy + S * 0.30, apexY = cy - S * 0.28 - rnd(i) * S * 0.04, w = S * 0.30;
+          ctx.beginPath();
+          ctx.moveTo(x - w, baseY);
+          ctx.lineTo(x - w * 0.22 + wob(i, S * 0.03), (baseY + apexY) / 2 + S * 0.04);
+          ctx.lineTo(x, apexY);
+          ctx.lineTo(x + w * 0.22 + wob(i + 2, S * 0.03), (baseY + apexY) / 2 + S * 0.02);
+          ctx.lineTo(x + w, baseY);
+          ctx.closePath(); ctx.fill();
+          ctx.fillStyle = 'rgba(255,255,255,0.6)'; // snow cap
+          ctx.beginPath(); ctx.moveTo(x, apexY); ctx.lineTo(x - w * 0.24, apexY + S * 0.13); ctx.lineTo(x + w * 0.24, apexY + S * 0.13); ctx.closePath(); ctx.fill();
+          ctx.fillStyle = ink;
+        }
         break;
-      case 'water': // wavy lines
-        ctx.lineWidth = Math.max(1, S * 0.05);
-        for (let j = -1; j <= 1; j++) { const y0 = cy + j * S * 0.28; ctx.beginPath();
-          for (let k = 0; k <= 8; k++) { const xx = -S * 0.5 + (S * 0.125) * k, yy = y0 + Math.sin(xx / S * 4) * S * 0.05; if (k === 0) ctx.moveTo(cx + xx, yy); else ctx.lineTo(cx + xx, yy); } ctx.stroke(); }
+      case 'water': // wavy current lines
+        ctx.lineWidth = Math.max(1, S * 0.045);
+        for (let j = -1; j <= 1; j++) {
+          const y0 = cy + j * S * 0.26 + wob(j + 5, S * 0.02);
+          ctx.beginPath();
+          for (let k = 0; k <= 8; k++) { const xx = cx - S * 0.5 + S * 0.125 * k, yy = y0 + Math.sin(xx / S * 4 + j) * S * 0.05; if (k === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy); }
+          ctx.stroke();
+        }
         break;
-      case 'swamp': // reeds + dots
-        ctx.lineWidth = Math.max(1, S * 0.05);
-        for (let i = 0; i < 6; i++) { const a = rnd(i) * 6.283, r = S * 0.5 * rnd(i + 10), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r; line(x, y, x, y - S * 0.18); }
-        for (let i = 0; i < 4; i++) { const a = rnd(i + 20) * 6.283, r = S * 0.4 * rnd(i + 30), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r; dot(x, y, Math.max(0.8, S * 0.04)); }
+      case 'swamp': // reed tufts + dashed water patches
+        for (let i = 0; i < 4; i++) { const a = rnd(i) * 6.283, r = S * 0.45 * rnd(i + 10), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r; handLine(x, y, x + wob(i + 2, S * 0.03), y - S * 0.18, Math.max(1, S * 0.05), i * 3); }
+        ctx.setLineDash([S * 0.10, S * 0.08]);
+        for (let j = 0; j < 2; j++) { const yy = cy + (j ? S * 0.24 : -S * 0.06); handLine(cx - S * 0.35, yy, cx + S * 0.35, yy, Math.max(1, S * 0.045), j * 5 + 20); }
+        ctx.setLineDash([]);
         break;
-      case 'desert': // stipple
-        for (let i = 0; i < 10; i++) { const a = rnd(i) * 6.283, r = S * 0.55 * rnd(i + 10), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r; dot(x, y, Math.max(0.8, S * 0.04)); }
+      case 'desert': // gentle dune curves + stipple
+        ctx.lineWidth = Math.max(1, S * 0.045);
+        for (let j = 0; j < 2; j++) {
+          const y0 = cy + (j ? S * 0.18 : -S * 0.14) + wob(j, S * 0.03);
+          ctx.beginPath();
+          for (let k = 0; k <= 8; k++) { const xx = cx - S * 0.45 + S * 0.11 * k, yy = y0 + Math.sin(xx / S * 3 + j * 1.5) * S * 0.05; if (k === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy); }
+          ctx.stroke();
+        }
+        for (let i = 0; i < 5; i++) { const a = rnd(i + 30) * 6.283, r = S * 0.5 * rnd(i + 40), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r; dot(x, y, Math.max(0.8, S * 0.035)); }
         break;
-      case 'road': // dashed track
-        ctx.lineWidth = Math.max(2, S * 0.14); ctx.setLineDash([S * 0.22, S * 0.16]);
-        line(cx - S * 0.55, cy, cx + S * 0.55, cy); ctx.setLineDash([]);
+      case 'road': // dashed track curving across the tinted hex
+        ctx.lineWidth = Math.max(2, S * 0.13); ctx.setLineDash([S * 0.26, S * 0.16]);
+        ctx.beginPath(); ctx.moveTo(cx - S * 0.6, cy + S * 0.10); ctx.quadraticCurveTo(cx, cy - S * 0.18, cx + S * 0.6, cy + S * 0.08); ctx.stroke();
+        ctx.setLineDash([]);
+        break;
+      case 'jungle': // dense round canopies + a few trunks
+        for (let i = 0; i < 7; i++) { const a = rnd(i) * 6.283, r = S * 0.45 * rnd(i + 10), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r; dot(x, y, S * 0.10 + rnd(i + 5) * S * 0.04); }
+        for (let i = 0; i < 3; i++) { const a = rnd(i + 20) * 6.283, r = S * 0.38 * rnd(i + 30), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r; handLine(x, y, x, y + S * 0.08, Math.max(1, S * 0.04), i + 50); }
+        break;
+      case 'tundra': // sparse dead ticks + snow dust
+        for (let i = 0; i < 3; i++) { const a = rnd(i) * 6.283, r = S * 0.5 * rnd(i + 10), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r; handLine(x, y, x + wob(i, S * 0.03), y - S * 0.10, Math.max(1, S * 0.05), i * 3); }
+        ctx.fillStyle = 'rgba(255,255,255,0.75)';
+        for (let i = 0; i < 5; i++) { const a = rnd(i + 30) * 6.283, r = S * 0.5 * rnd(i + 40), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r; dot(x, y, Math.max(0.7, S * 0.03)); }
+        ctx.fillStyle = ink;
+        break;
+      case 'coast': { // lower half water over the sand fill, wavy shoreline between
+        ctx.save(); tracePoly(ctx, hexCornersAt(cx, cy, S)); ctx.clip();
+        ctx.fillStyle = ink; ctx.fillRect(cx - S, cy, S * 2, S * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = Math.max(1, S * 0.04);
+        ctx.beginPath();
+        for (let k = 0; k <= 10; k++) { const xx = cx - S * 0.6 + S * 0.12 * k, yy = cy + Math.sin(k * 0.9 + rnd(1) * 3) * S * 0.05; if (k === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy); }
+        ctx.stroke();
+        ctx.restore();
+        break;
+      }
+      case 'town': // little buildings — square bodies + peaked roofs
+        for (let i = 0; i < 3; i++) {
+          const a = rnd(i) * 6.283, r = S * 0.38 * rnd(i + 10), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r, w = S * 0.18, h = S * 0.16;
+          ctx.fillRect(x - w / 2, y - h / 2, w, h);
+          ctx.beginPath(); ctx.moveTo(x - w * 0.62, y - h / 2); ctx.lineTo(x, y - h / 2 - h * 0.55); ctx.lineTo(x + w * 0.62, y - h / 2); ctx.closePath(); ctx.fill();
+        }
+        break;
+      case 'ruins': // broken wall fragments — open, incomplete rectangles
+        ctx.lineWidth = Math.max(1.2, S * 0.06);
+        for (let i = 0; i < 3; i++) {
+          const a = rnd(i) * 6.283, r = S * 0.40 * rnd(i + 10), x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r, w = S * 0.22, h = S * 0.14;
+          ctx.beginPath(); ctx.moveTo(x - w / 2 + wob(i, S * 0.02), y - h / 2); ctx.lineTo(x - w / 2, y + h / 2); ctx.lineTo(x + w / 2 - w * 0.25, y + h / 2 + wob(i + 2, S * 0.02)); ctx.stroke();
+        }
         break;
     }
     ctx.restore();
@@ -287,7 +396,7 @@
       const ctr = lay.center(c, r);
       tracePoly(ctx, hexCornersAt(ctr.x, ctr.y, S));
       ctx.fillStyle = t.color; ctx.fill();
-      drawTexture(t.id, t.accent, ctx, ctr.x, ctr.y, S, c, r);
+      drawGlyph(t, ctx, ctr.x, ctr.y, S, c, r);
     }
 
     // crisp hex grid on top
@@ -347,6 +456,7 @@
     hexAt,
     hexCornersAt,
     hexPolygon,
+    hexBBox,
     hexRound,
     renderHexMap,
     hexToVTT,

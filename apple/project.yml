@@ -35,7 +35,9 @@ targets:
           - Web
           # Bundled below as explicit resources (folder ref / plain file).
           - DungeonCellClassifier.mlmodelc
+          - TerrainClassifier.mlmodelc
           - labels.json
+          - terrain_labels.json
       # The HTML/JS UI ships as bundled resources (Web/index.html + siblings).
       - path: DungeonScan/Web
         buildPhase: resources
@@ -46,8 +48,16 @@ targets:
       - path: DungeonScan/DungeonCellClassifier.mlmodelc
         buildPhase: resources
         type: folder
-      # Class-label vocabulary shipped next to the model.
+      # CoreML HEX terrain classifier — same folder-ref treatment as the cell
+      # model. Lands at Contents/Resources/TerrainClassifier.mlmodelc. Picked by
+      # name in NativeBridge.classify (model:"TerrainClassifier").
+      - path: DungeonScan/TerrainClassifier.mlmodelc
+        buildPhase: resources
+        type: folder
+      # Class-label vocabularies shipped next to their models.
       - path: DungeonScan/labels.json
+        buildPhase: resources
+      - path: DungeonScan/terrain_labels.json
         buildPhase: resources
     settings:
       base:

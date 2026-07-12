@@ -6,3 +6,5 @@ training/dataset_split/
 *.xcarchive
 .DS_Store
 node_modules/
+training/dataset_terrain/
+training/dataset_terrain_split/
