@@ -10,7 +10,7 @@
   window.DSBridge = {
     async capabilities() {
       try { if (N() && N().capabilities) return await N().capabilities(); } catch (_) {}
-      return { ocr: false, classify: false, terrain: false, ollama: false, native: !!N() };
+      return { ocr: false, classify: false, terrain: false, grid: false, ollama: false, native: !!N() };
     },
     async openImage() {
       if (N() && N().openImage) {
@@ -92,6 +92,12 @@
     async classify(cropDataUrls, model) {
       if (N() && N().classify) { try { return await N().classify(cropDataUrls, model); } catch (e) {} }
       return cropDataUrls.map(() => ({ label: 'unknown', confidence: 0 }));
+    },
+    // GridNet: image data URL -> [9] floats (4 corners normalized TL,TR,BR,BL + cell/maxdim),
+    // or null if the model isn't bundled (caller falls back to the classical detector).
+    async predictGrid(imageDataUrl) {
+      if (N() && N().predictGrid) { try { return await N().predictGrid(imageDataUrl); } catch (e) {} }
+      return null;
     },
     // optional local vision-LLM (Ollama) — Developer-ID build only; sandbox/MAS returns null
     async vlm(imageDataUrl, prompt) {
