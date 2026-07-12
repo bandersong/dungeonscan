@@ -56,6 +56,22 @@ VERSION="$(awk -F'"' '/MARKETING_VERSION:/{print $2; exit}' project.yml 2>/dev/n
 APP_ONLY=0
 for a in "$@"; do [[ "$a" == "--app" ]] && APP_ONLY=1; done
 
+# ---- Sparkle: ensure the EdDSA signing key + bake its public key into Info.plist
+# The private key lives in the login Keychain (Keychain may prompt the first time
+# — click Allow / Always Allow). The public key is safe to commit.
+SPARKLE_BIN="../tools/sparkle/bin"
+if [[ -x "$SPARKLE_BIN/generate_keys" ]]; then
+  "$SPARKLE_BIN/generate_keys" >/dev/null 2>&1 || true   # creates a key if none exists
+  ED_PUB="$("$SPARKLE_BIN/generate_keys" -p 2>/dev/null | tail -1)"
+  if [[ -n "$ED_PUB" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $ED_PUB" DungeonScan/Info.plist 2>/dev/null \
+      || /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $ED_PUB" DungeonScan/Info.plist
+    echo "==> Sparkle public key baked into Info.plist: $ED_PUB"
+  else
+    echo "⚠️  Could not read the Sparkle public key from the Keychain — auto-update won't verify signatures." >&2
+  fi
+fi
+
 # ---- GUI-Terminal preflight -------------------------------------------------
 if [[ -n "${SSH_CONNECTION:-}${SSH_CLIENT:-}${SSH_TTY:-}" ]]; then
   echo "⚠️  ssh session detected. The login keychain is locked over non-GUI ssh —"
@@ -190,10 +206,42 @@ xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
 echo "    stapling the DMG…"
 xcrun stapler staple "$DMG" && echo "    ✓ DMG stapled"
 
-# The notarization ticket is keyed to the signed .app, so it covers BOTH the
-# DMG (stapled below — offline-clean) and the ZIP (online ticket check). zips
-# cannot be stapled; the DMG is the canonical primary download.
+# Staple the .app too (fetches the ticket by cdhash — no keychain needed) so it's
+# offline-clean, then rebuild the ZIP from the STAPLED app. Sparkle installs this
+# zip, so it must carry the notarization ticket.
+echo "    stapling the app + rebuilding the zip from it…"
+xcrun stapler staple "$APP" && echo "    ✓ app stapled"
+rm -f "$ZIP"; ditto -c -k --keepParent "$APP" "$ZIP"
 rm -rf "$STAGE"
+
+# ---- Sparkle: sign the update zip + write the appcast -----------------------
+if [[ -x "$SPARKLE_BIN/sign_update" ]]; then
+  echo "==> Sparkle: signing the update + writing appcast…"
+  SIG_LINE="$("$SPARKLE_BIN/sign_update" "$ZIP" 2>/dev/null || true)"
+  ED_SIG="$(printf '%s' "$SIG_LINE" | sed -n 's/.*edSignature="\([^"]*\)".*/\1/p')"
+  ED_LEN="$(printf '%s' "$SIG_LINE" | sed -n 's/.*length="\([^"]*\)".*/\1/p')"
+  BUILDVER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist" 2>/dev/null || echo 1)"
+  if [[ -n "$ED_SIG" ]]; then
+    cat > ../appcast.xml <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>DungeonScan</title>
+    <item>
+      <title>Version ${VERSION}</title>
+      <sparkle:version>${BUILDVER}</sparkle:version>
+      <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/bandersong/dungeonscan/releases/download/v${VERSION}/DungeonScan-${VERSION}.zip" sparkle:edSignature="${ED_SIG}" length="${ED_LEN}" type="application/octet-stream" />
+    </item>
+  </channel>
+</rss>
+EOF
+    echo "    ✓ wrote ../appcast.xml (v${VERSION}, build ${BUILDVER})"
+  else
+    echo "    ⚠️  sign_update produced no signature — appcast NOT written." >&2
+  fi
+fi
 
 # ---- Gatekeeper verdict ------------------------------------------------------
 echo ""

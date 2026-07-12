@@ -1,4 +1,5 @@
 import AppKit
+import Sparkle
 import WebKit
 
 /// Owns DungeonScan's single main window + WKWebView and wires the NativeBridge.
@@ -8,8 +9,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var bridge: NativeBridge?
     private var webView: WKWebView?
+    private var updater: SPUStandardUpdaterController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Sparkle auto-updater (Developer ID build). Starts the updater, which
+        // checks the appcast on its own schedule; the menu adds Check for Updates…
+        updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        setupMainMenu()
+
         let bridge = NativeBridge()
         self.bridge = bridge
 
@@ -40,6 +47,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// Build the app + Edit menus. "Check for Updates…" drives Sparkle; the Edit
+    /// menu gives the WebView's text fields standard copy/paste/undo shortcuts.
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+
+        let appItem = NSMenuItem()
+        mainMenu.addItem(appItem)
+        let appMenu = NSMenu()
+        appItem.submenu = appMenu
+        appMenu.addItem(withTitle: "About DungeonScan", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        let check = NSMenuItem(title: "Check for Updates…", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
+        check.target = updater
+        appMenu.addItem(check)
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide DungeonScan", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = NSMenuItem(title: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthers)
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quit DungeonScan", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+        let editItem = NSMenuItem()
+        mainMenu.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editItem.submenu = editMenu
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redo)
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+
+        NSApp.mainMenu = mainMenu
+    }
 
     /// Build a WKWebView with the NativeBridge shim injected at document start
     /// and the "ds" WKScriptMessageHandlerWithReply registered. Because the

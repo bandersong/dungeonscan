@@ -8,3 +8,4 @@ training/dataset_split/
 node_modules/
 training/dataset_terrain/
 training/dataset_terrain_split/
+tools/
