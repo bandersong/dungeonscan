@@ -30,9 +30,30 @@
     async saveFile(o) {
       if (N() && N().saveFile) { try { return await N().saveFile(o); } catch (e) { return { ok: false }; } }
       const a = document.createElement('a');
-      if (o.dataUrl) a.href = o.dataUrl;
-      else a.href = 'data:' + (o.kind === 'vtt' ? 'application/json' : 'text/plain') + ';charset=utf-8,' + encodeURIComponent(o.text || '');
-      a.download = o.suggestedName || 'map'; a.click();
+      let objUrl = null;
+      try {
+        if (o.dataUrl) {
+          // Binary data URLs (e.g. data:application/pdf;base64,…) download far
+          // more reliably as a Blob than as a raw href in some browsers.
+          const m = /^data:([^;,]+)?(;base64)?,(.*)$/.exec(o.dataUrl);
+          if (m && m[2] && typeof Blob !== 'undefined' && typeof atob !== 'undefined') {
+            const mime = m[1] || 'application/octet-stream';
+            const bin = atob(m[3]);
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            objUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+            a.href = objUrl;
+          } else {
+            a.href = o.dataUrl;
+          }
+        } else {
+          a.href = 'data:' + (o.kind === 'vtt' || o.kind === 'json' ? 'application/json' : 'text/plain') + ';charset=utf-8,' + encodeURIComponent(o.text || '');
+        }
+        a.download = o.suggestedName || 'map';
+        document.body.appendChild(a); a.click(); a.remove();
+      } finally {
+        if (objUrl) setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
+      }
       return { ok: true, browser: true };
     },
     async ocr(imageDataUrl) {

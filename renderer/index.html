@@ -40,7 +40,11 @@
       <div class="step" data-step="2">
         <div class="shead"><span class="n">2</span> Line up the grid</div>
         <div class="sbody">
-          <p class="hint">Get the blue grid sitting right on top of the squares you drew. Auto-detect usually nails it.</p>
+          <div class="seg" id="modeToggle">
+            <button type="button" class="seg-btn on" data-mode="square">Square dungeon</button>
+            <button type="button" class="seg-btn" data-mode="hex">Hex map</button>
+          </div>
+          <p class="hint" id="gridHint">Get the blue grid sitting right on top of the squares you drew. Auto-detect usually nails it.</p>
           <button id="btn-auto" class="primary wide">✨ Auto-detect the grid</button>
           <div id="gridControls" class="controls"></div>
         </div>
@@ -51,7 +55,7 @@
         <div class="sbody">
           <button id="btn-read" class="primary wide big">🔍 Read my dungeon</button>
           <div id="readInfo" class="readinfo"></div>
-          <div class="controls read-tuning">
+          <div class="controls read-tuning" id="readTuning">
             <div class="ctl">
               <label><span>Line sensitivity</span><span class="v" id="sensVal">balanced</span></label>
               <input id="sensRange" type="range" min="0" max="100" value="50" />
@@ -124,5 +128,6 @@
 <script src="stamps.js"></script>
 <script src="testgen.js"></script>
 <script src="samples.js"></script>
+<script src="hexgrid.js"></script>
 <script src="bridge.js"></script>
 <script src="app.js"></script>

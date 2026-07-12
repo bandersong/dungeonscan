@@ -22,7 +22,14 @@
     // symbol stamps: {id,x,y,size,rotation,color,label}  (x,y normalized over grid content box)
     stamps: [], selStamp: null, dragStamp: false, dragOff: null,
     // room-box drag preview
-    boxStart: null, boxCur: null
+    boxStart: null, boxCur: null,
+    // hex mode ('square' is the default; everything above is the square flow)
+    mode: 'square',                 // 'square' | 'hex'
+    hexGrid: null,                  // {size,ox,oy,cols,rows} in source-image pixels
+    terrain: new Map(),             // "col,row" -> terrainId  (painted hexes)
+    hexTerrain: 'plains',           // currently selected terrain brush (or 'erase')
+    hexStyle: 'parchment',          // HEX_STYLES key for export
+    hexReady: false                 // hex mode: step-3 "Start painting" has been clicked
   };
 
   const view = $('view'), vctx = view.getContext('2d');
@@ -45,6 +52,10 @@
     S.gray = DS.toGray(work.getContext('2d').getImageData(0, 0, w, h));
     S.walls = null; S.floor = null; S.doors = []; S.features = []; S.history = []; S.redo = [];
     S.stamps = []; S.selStamp = null; S.boxStart = S.boxCur = null;
+    // a fresh image always returns to the default square-dungeon flow
+    S.mode = 'square'; S.hexGrid = null; S.terrain = new Map();
+    S.hexReady = false; S.hexTerrain = 'plains';
+    syncModeChrome();
     view.width = w; view.height = h;
     $('drop').classList.add('hidden');
     hideStampBar();
@@ -90,6 +101,102 @@
     mk('cell', 'Square size', 12, Math.round(Math.min(S.w, S.h) / 4), 1, S.grid.s, (v) => v + 'px');
     mk('ox', 'Nudge sideways', 0, Math.max(2, Math.round(S.grid.s)), 1, S.grid.ox, (v) => v + 'px');
     mk('oy', 'Nudge up/down', 0, Math.max(2, Math.round(S.grid.s)), 1, S.grid.oy, (v) => v + 'px');
+  }
+
+  // ---------- hex grid ----------
+  function recomputeHexCR() {
+    const g = S.hexGrid; if (!g) return;
+    const width = DS.hex.SQ3 * g.size;
+    g.cols = Math.max(1, Math.floor((S.w - g.ox) / width) + 1);
+    g.rows = Math.max(1, Math.floor((S.h - g.oy) / (1.5 * g.size)) + 1);
+  }
+  function buildHexGridControls() {
+    const el = $('gridControls'); el.innerHTML = '';
+    const g = S.hexGrid;
+    const mk = (id, label, min, max, step, val, fmt) => {
+      const w = document.createElement('div'); w.className = 'ctl';
+      w.innerHTML = `<label><span>${label}</span><span class="v" id="hv-${id}">${fmt(val)}</span></label>`;
+      const inp = document.createElement('input'); inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = val;
+      inp.addEventListener('input', () => {
+        S.hexGrid[id] = Number(inp.value);
+        recomputeHexCR(); $(`hv-${id}`).textContent = fmt(Number(inp.value));
+        render();
+      });
+      w.appendChild(inp); el.appendChild(w);
+    };
+    mk('size', 'Hex size', 8, Math.max(10, Math.round(Math.min(S.w, S.h) / 3)), 1, g.size, (v) => v + 'px');
+    mk('ox', 'Nudge sideways', 0, Math.max(2, S.w), 1, g.ox, (v) => v + 'px');
+    mk('oy', 'Nudge up/down', 0, Math.max(2, S.h), 1, g.oy, (v) => v + 'px');
+  }
+
+  // ---------- mode switching ----------
+  function syncModeChrome() {
+    document.querySelectorAll('#modeToggle .seg-btn').forEach((b) => b.classList.toggle('on', b.dataset.mode === S.mode));
+    $('btn-read').textContent = S.mode === 'hex' ? '🖌️ Start painting' : '🔍 Read my dungeon';
+    $('readTuning').classList.toggle('hidden', S.mode === 'hex');
+    $('gridHint').textContent = S.mode === 'hex'
+      ? 'Line up the hexes over your map. Auto-detect gives a starting point — nudge to fit.'
+      : 'Get the blue grid sitting right on top of the squares you drew. Auto-detect usually nails it.';
+  }
+  // rebuild the step-4 palette + step-5 controls for the active mode
+  function reflectMode() {
+    syncModeChrome();
+    if (S.mode === 'hex') buildHexTools(); else buildTools();
+    buildExportControls();
+  }
+  function syncStepGating() {
+    unlock(3);
+    if (S.mode === 'hex') { if (S.hexReady) { unlock(4); unlock(5); } else { relock(4); relock(5); } }
+    else { if (S.walls) { unlock(4); unlock(5); } else { relock(4); relock(5); } }
+  }
+  function setMode(mode) {
+    if (mode === S.mode) return;
+    if (mode === 'hex' && !S.gray) { setStatus('Add a photo first, then switch to hex.'); return; }
+    S.mode = mode;
+    if (mode === 'hex') {
+      if (!S.hexGrid) { S.hexGrid = DS.hex.estimateHexGrid(S.gray, S.w, S.h); recomputeHexCR(); }
+      buildHexGridControls();
+    } else {
+      buildGridControls();
+    }
+    syncStepGating();
+    reflectMode();
+    render();
+    setStatus(mode === 'hex' ? 'Hex mode — line up the hexes, then Start painting.' : 'Square dungeon mode.');
+  }
+  // gate that says "editing is allowed right now" for whichever mode is active
+  function editReady() { return S.mode === 'square' ? !!S.walls : !!S.hexReady; }
+
+  // ---------- shared geometry helpers (work in both modes) ----------
+  function tracePts(ctx, pts) {
+    ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+  }
+  function withAlpha(hex, a) {
+    const h = String(hex).replace('#', '');
+    const full = h.length === 3 ? h.split('').map((x) => x + x).join('') : h;
+    const n = parseInt(full, 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  // bounding box of the editable region in SOURCE pixels — square grid box, or
+  // the tight bounds of every hex polygon. Stamps are normalized 0..1 over it.
+  function contentBox() {
+    if (S.mode === 'hex') return hexContentBox();
+    const { C, R, s, ox, oy } = S.grid;
+    return { ox, oy, W: C * s, H: R * s };
+  }
+  function hexContentBox() {
+    const g = S.hexGrid;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
+      for (const p of DS.hex.hexPolygon(c, r, g)) {
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+      }
+    }
+    if (!Number.isFinite(minX)) return { ox: 0, oy: 0, W: S.w, H: S.h };
+    return { ox: minX, oy: minY, W: Math.max(1, maxX - minX), H: Math.max(1, maxY - minY) };
   }
 
   // ---------- read (digitize) ----------
@@ -195,6 +302,13 @@
     updateToolHint();
   }
   function updateToolHint() {
+    if (S.mode === 'hex') {
+      const t = DS.hex.TERRAIN_BY_ID[S.hexTerrain];
+      $('toolHint').textContent = S.hexTerrain === 'erase'
+        ? 'Click or drag hexes to clear terrain (right-click also erases).'
+        : `Click or drag to paint ${t ? t.name : 'terrain'}. Right-click erases a hex.`;
+      return;
+    }
     const h = {
       wall: 'Click on a grid line to add a wall; click a wall to remove it.',
       floor: 'Click a square to mark it as room floor (or clear it).',
@@ -204,6 +318,33 @@
       erase: 'Click a wall to erase it.'
     };
     $('toolHint').textContent = h[S.tool] || '';
+  }
+  // hex terrain palette: an Erase brush + one colored swatch per terrain
+  function buildHexTools() {
+    const el = $('tools'); el.innerHTML = '';
+    const mk = (label, inner, on, onClick) => {
+      const b = document.createElement('button');
+      b.className = 'tool' + (on ? ' on' : '');
+      b.innerHTML = inner;
+      b.addEventListener('click', onClick);
+      el.appendChild(b);
+    };
+    mk('Erase', '<span class="ic">🧽</span> Erase', S.hexTerrain === 'erase', () => { S.hexTerrain = 'erase'; buildHexTools(); });
+    for (const t of DS.hex.TERRAINS) {
+      mk(t.name, `<span class="swatch" style="background:${t.color}"></span> ${t.name}`, S.hexTerrain === t.id, () => { S.hexTerrain = t.id; buildHexTools(); });
+    }
+    updateToolHint();
+  }
+  // hex step 3: no wall detection — just unlock painting + export
+  function startHexPainting() {
+    if (!S.hexGrid) return;
+    S.hexReady = true;
+    S.features = [];
+    unlock(4); unlock(5);
+    buildHexTools(); buildExportControls();
+    $('readInfo').innerHTML = 'Paint terrain onto the hexes in <b>step 4</b>, then save your hex map in <b>step 5</b>.';
+    setStatus('Hex map ready — paint terrain in step 4.');
+    render();
   }
 
   function nearestEdge(ix, iy) {
@@ -288,12 +429,12 @@
 
   // ---------- symbol stamps ----------
   function stampCenterPx(st) {
-    const { C, R, s, ox, oy } = S.grid;
-    return { x: ox + st.x * (C * s), y: oy + st.y * (R * s) };
+    const b = contentBox();
+    return { x: b.ox + st.x * b.W, y: b.oy + st.y * b.H };
   }
   function stampRadiusPx(st) {
-    const { C, R, s } = S.grid;
-    return Math.max(10, st.size * Math.min(C * s, R * s) * 0.5);
+    const b = contentBox();
+    return Math.max(10, st.size * Math.min(b.W, b.H) * 0.5);
   }
   function stampAt(ix, iy) {
     for (let i = S.stamps.length - 1; i >= 0; i--) {
@@ -303,7 +444,7 @@
     return -1;
   }
   function addStamp(id) {
-    if (!S.walls) return;
+    if (!editReady()) return;
     pushHistory();
     S.stamps.push({ id, x: 0.5, y: 0.5, size: 0.08, rotation: 0, color: '#1b2430', label: '' });
     S.selStamp = S.stamps.length - 1;
@@ -367,8 +508,14 @@
     return { x: (ev.clientX - r.left) * (view.width / r.width), y: (ev.clientY - r.top) * (view.height / r.height) };
   }
   let painting = false;
+  // hex terrain brush — paints (or erases) the hex under the cursor
+  function paintHex(p, erase) {
+    const h = DS.hex.hexAt(p.x, p.y, S.hexGrid); if (!h) return;
+    const key = h.col + ',' + h.row;
+    if (erase) S.terrain.delete(key); else S.terrain.set(key, S.hexTerrain);
+  }
   view.addEventListener('pointerdown', (ev) => {
-    if (!S.walls) return;
+    if (!editReady()) return;
     painting = true; view.setPointerCapture(ev.pointerId);
     const p = toImg(ev);
     // stamps take priority: click one to select & drag it
@@ -383,6 +530,11 @@
     }
     // clicking empty space drops the current stamp selection
     if (S.selStamp != null) { S.selStamp = null; hideStampBar(); }
+    if (S.mode === 'hex') {
+      pushHistory();
+      paintHex(p, ev.button === 2 || S.hexTerrain === 'erase'); // right-click erases
+      render(); return;
+    }
     if (S.tool === 'roombox') {
       pushHistory();
       S.boxStart = cellAt(p.x, p.y); S.boxCur = S.boxStart;
@@ -395,9 +547,13 @@
     const p = toImg(ev);
     if (S.dragStamp && S.selStamp != null) {
       const st = S.stamps[S.selStamp];
-      const { C, R, s, ox, oy } = S.grid;
-      st.x = clamp01((p.x - S.dragOff.x - ox) / (C * s));
-      st.y = clamp01((p.y - S.dragOff.y - oy) / (R * s));
+      const b = contentBox();
+      st.x = clamp01((p.x - S.dragOff.x - b.ox) / b.W);
+      st.y = clamp01((p.y - S.dragOff.y - b.oy) / b.H);
+      render(); return;
+    }
+    if (S.mode === 'hex') {
+      paintHex(p, (ev.buttons & 2) === 2 || S.hexTerrain === 'erase');
       render(); return;
     }
     if (S.tool === 'roombox' && S.boxStart) {
@@ -411,11 +567,14 @@
     S.dragStamp = false; S.dragOff = null;
     painting = false;
   });
+  // right-click is an erase stroke in hex mode — suppress the browser menu
+  view.addEventListener('contextmenu', (ev) => ev.preventDefault());
 
   // ---------- rendering the stage ----------
   function render() {
     vctx.clearRect(0, 0, view.width, view.height);
     if (S.work) vctx.drawImage(S.work, 0, 0);
+    if (S.mode === 'hex') return renderHexOverlay();
     const { s, ox, oy, C, R } = S.grid;
     // grid overlay (dim once read, bright while locking)
     vctx.strokeStyle = S.walls ? 'rgba(63,138,224,0.20)' : 'rgba(63,138,224,0.7)';
@@ -469,10 +628,41 @@
       vctx.restore();
     }
   }
+  // hex overlay: photo (already drawn) + painted terrain hexes (semi-transparent)
+  // + hex grid lines + stamps. Grid is bright while locking, dim once painting.
+  function renderHexOverlay() {
+    const g = S.hexGrid; if (!g) return;
+    for (const [key, id] of S.terrain) {
+      const t = DS.hex.TERRAIN_BY_ID[id]; if (!t) continue;
+      const parts = String(key).split(','); const c = +parts[0], r = +parts[1];
+      if (!Number.isFinite(c) || !Number.isFinite(r)) continue;
+      tracePts(vctx, DS.hex.hexPolygon(c, r, g));
+      vctx.fillStyle = withAlpha(t.color, 0.6); vctx.fill();
+    }
+    vctx.strokeStyle = S.hexReady ? 'rgba(63,138,224,0.25)' : 'rgba(63,138,224,0.7)';
+    vctx.lineWidth = 1;
+    for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) { tracePts(vctx, DS.hex.hexPolygon(c, r, g)); vctx.stroke(); }
+    // stamps + selected-stamp halo (normalized over the hex content box)
+    const b = contentBox();
+    if (S.stamps.length) {
+      vctx.save(); vctx.translate(b.ox, b.oy);
+      DS.stamps.draw(vctx, S.stamps, { W: b.W, H: b.H });
+      vctx.restore();
+    }
+    if (S.selStamp != null && S.stamps[S.selStamp]) {
+      const st = S.stamps[S.selStamp];
+      const px = b.ox + st.x * b.W, py = b.oy + st.y * b.H, sz = st.size * Math.min(b.W, b.H);
+      vctx.save();
+      vctx.strokeStyle = 'rgba(63,138,224,0.95)'; vctx.lineWidth = 2; vctx.setLineDash([6, 4]);
+      vctx.strokeRect(px - sz / 2 - 5, py - sz / 2 - 5, sz + 10, sz + 10);
+      vctx.restore();
+    }
+  }
 
   // ---------- export ----------
   function buildExportControls() {
     const el = $('exportControls'); el.innerHTML = '';
+    if (S.mode === 'hex') return buildHexExportControls(el);
     const mkSelect = (label, list, cur, onSel) => {
       const w = document.createElement('div'); w.className = 'ctl';
       w.innerHTML = `<label><span>${label}</span></label>`;
@@ -491,15 +681,47 @@
     ps.value = S.ppg; ps.addEventListener('change', () => { S.ppg = Number(ps.value); });
     p.appendChild(ps); el.appendChild(p);
   }
+  // hex export controls: just a hex map style + pixels-per-hex. Floor texture /
+  // wall style don't apply (hex maps have no walls).
+  function buildHexExportControls(el) {
+    const mkSelect = (label, list, cur, onSel) => {
+      const w = document.createElement('div'); w.className = 'ctl';
+      w.innerHTML = `<label><span>${label}</span></label>`;
+      const sel = document.createElement('select');
+      list.forEach((it) => { const o = document.createElement('option'); o.value = it.id; o.textContent = it.name; sel.appendChild(o); });
+      sel.value = cur; sel.addEventListener('change', () => onSel(sel.value));
+      w.appendChild(sel); el.appendChild(w);
+    };
+    const hexStyles = Object.keys(DS.hex.HEX_STYLES).map((id) => ({ id, name: id.charAt(0).toUpperCase() + id.slice(1) }));
+    mkSelect('Map style', hexStyles, S.hexStyle, (v) => { S.hexStyle = v; });
+    const p = document.createElement('div'); p.className = 'ctl';
+    p.innerHTML = `<label><span>Detail (pixels per hex)</span></label>`;
+    const ps = document.createElement('select');
+    [[48, 'Skirmish (48)'], [64, 'Standard (64)'], [80, 'Detailed (80)'], [100, 'Print (100)']].forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; ps.appendChild(o); });
+    ps.value = S.ppg; ps.addEventListener('change', () => { S.ppg = Number(ps.value); });
+    p.appendChild(ps); el.appendChild(p);
+  }
   // Clean battle-map canvas (the base for every image/PDF/VTT export). Stamps are
   // drawn onto it too, so saved PNG/PDF/VTT-image all include them.
   async function cleanCanvas() {
+    if (S.mode === 'hex') {
+      const c = DS.hex.renderHexMap({ grid: S.hexGrid, terrain: S.terrain, features: S.features, ppg: S.ppg, style: S.hexStyle });
+      if (S.stamps && S.stamps.length) {
+        await DS.stamps.ensureLoaded(S.stamps);
+        DS.stamps.draw(c.getContext('2d'), S.stamps, { W: c.width, H: c.height });
+      }
+      return c;
+    }
     const c = DS.renderBattleMap({ walls: S.walls, floor: S.floor, doors: S.doors, C: S.grid.C, R: S.grid.R, ppg: S.ppg, style: S.style, floorTexture: S.floorTexture, wallStyle: S.wallStyle, features: S.features });
     if (S.stamps && S.stamps.length) {
       await DS.stamps.ensureLoaded(S.stamps);
       DS.stamps.draw(c.getContext('2d'), S.stamps, { W: c.width, H: c.height });
     }
     return c;
+  }
+  // grid dimensions for the active mode — squares use {C,R}, hex uses {cols,rows}
+  function gridDims() {
+    return S.mode === 'hex' && S.hexGrid ? { C: S.hexGrid.cols, R: S.hexGrid.rows } : { C: S.grid.C, R: S.grid.R };
   }
   function bytesToDataUrl(bytes, mime) {
     let bin = ''; const chunk = 0x8000;
@@ -519,7 +741,7 @@
     sel.addEventListener('change', onChange); onChange();
   }
   async function saveMap() {
-    if (!S.walls) return;
+    if (!editReady()) return;
     const fmt = $('exportFormat').value;
     const ips = Math.max(0.25, Number($('ipsInput').value) || 1);
     try {
@@ -530,12 +752,14 @@
         saveNote(r, `battle map (${c.width}×${c.height} ${fmt.toUpperCase()})`);
       } else if (fmt === 'pdf') {
         const c = await cleanCanvas();
-        const bytes = DS.buildPDF(c, { C: S.grid.C, R: S.grid.R, ppg: S.ppg, inchesPerSquare: ips });
+        const d = gridDims();
+        const bytes = DS.buildPDF(c, { C: d.C, R: d.R, ppg: S.ppg, inchesPerSquare: ips });
         const r = await DSBridge.saveFile({ suggestedName: 'battle-map.pdf', kind: 'pdf', dataUrl: bytesToDataUrl(bytes, 'application/pdf') });
         saveNote(r, `battle map (PDF, ${c.width}×${c.height})`);
       } else if (fmt === 'pdf-tiled') {
         const c = await cleanCanvas();
-        const bytes = DS.buildTiledPDF(c, { C: S.grid.C, R: S.grid.R, ppg: S.ppg, inchesPerSquare: ips });
+        const d = gridDims();
+        const bytes = DS.buildTiledPDF(c, { C: d.C, R: d.R, ppg: S.ppg, inchesPerSquare: ips });
         const r = await DSBridge.saveFile({ suggestedName: 'battle-map-tiled.pdf', kind: 'pdf', dataUrl: bytesToDataUrl(bytes, 'application/pdf') });
         saveNote(r, 'tiled battle map (PDF)');
       } else if (fmt === 'dd2vtt') {
@@ -548,6 +772,13 @@
     }
   }
   async function saveVTT() {
+    if (S.mode === 'hex') {
+      const c = await cleanCanvas();
+      const uvtt = DS.hex.hexToVTT({ grid: S.hexGrid, ppg: S.ppg, imageBase64: c.toDataURL('image/png').split(',')[1] });
+      const r = await DSBridge.saveFile({ suggestedName: 'hex-map.dd2vtt', kind: 'vtt', text: JSON.stringify(uvtt) });
+      saveNote(r, `hex VTT (${S.hexGrid.cols}×${S.hexGrid.rows} hexes)`);
+      return;
+    }
     if (!S.walls) return;
     const c = await cleanCanvas();
     const uvtt = DS.buildUVTT({ walls: S.walls, doors: S.doors, pixelsPerGrid: S.ppg, imageBase64: c.toDataURL('image/png').split(',')[1] });
@@ -557,6 +788,16 @@
     saveNote(r, `VTT (${uvtt.line_of_sight.length} walls, ${uvtt.portals.length} doors)`);
   }
   async function saveFoundry() {
+    if (S.mode === 'hex') {
+      const c = await cleanCanvas();
+      const uvtt = DS.hex.hexToVTT({ grid: S.hexGrid, ppg: S.ppg, imageBase64: c.toDataURL('image/png').split(',')[1] });
+      const scene = DS.toFoundryScene(uvtt, 'DungeonScan Hex Scene');
+      scene.grid.type = 0;                                   // 0 = hex grid in Foundry
+      scene.grid.size = Math.round(DS.hex.SQ3 * S.ppg);      // hex flat-to-flat width, px
+      const r = await DSBridge.saveFile({ suggestedName: 'hex-scene.json', kind: 'json', text: JSON.stringify(scene) });
+      saveNote(r, `hex Foundry scene (${S.hexGrid.cols}×${S.hexGrid.rows})`);
+      return;
+    }
     if (!S.walls) return;
     const c = await cleanCanvas();
     const uvtt = DS.buildUVTT({ walls: S.walls, doors: S.doors, pixelsPerGrid: S.ppg, imageBase64: c.toDataURL('image/png').split(',')[1] });
@@ -565,7 +806,7 @@
     saveNote(r, `Foundry scene (${scene.walls.length} walls)`);
   }
   function buildRoomKeyText() {
-    const { C, R } = S.grid, lines = ['DUNGEON ROOM KEY', '==================', ''];
+    const { C, R } = (S.mode === 'hex' && S.hexGrid) ? { C: S.hexGrid.cols, R: S.hexGrid.rows } : S.grid, lines = ['DUNGEON ROOM KEY', '==================', ''];
     const nums = S.features.filter((f) => f.kind === 'number').sort((a, b) => Number(a.label) - Number(b.label));
     if (nums.length) {
       lines.push('Numbered rooms:');
@@ -587,7 +828,7 @@
     return lines.join('\n');
   }
   async function saveRoomKey() {
-    if (!S.walls) return;
+    if (!editReady()) return;
     const r = await DSBridge.saveFile({ suggestedName: 'dungeon-room-key.txt', kind: 'txt', text: buildRoomKeyText() });
     saveNote(r, 'room key');
   }
@@ -628,7 +869,8 @@
       grid: S.grid,
       walls: S.walls ? { v: S.walls.vEdge.map((r) => [...r]), h: S.walls.hEdge.map((r) => [...r]), C: S.walls.C, R: S.walls.R } : null,
       floor: S.floor ? [...S.floor] : null,
-      doors: S.doors, features: S.features, stamps: S.stamps
+      doors: S.doors, features: S.features, stamps: S.stamps,
+      terrain: [...S.terrain.entries()], mode: S.mode, hexGrid: S.hexGrid
     });
   }
   function pushHistory() {
@@ -642,7 +884,11 @@
     S.walls = p.walls ? { vEdge: p.walls.v.map((r) => Uint8Array.from(r)), hEdge: p.walls.h.map((r) => Uint8Array.from(r)), C: p.walls.C, R: p.walls.R } : null;
     S.floor = p.floor ? Uint8Array.from(p.floor) : null;
     S.doors = p.doors; S.features = p.features; S.stamps = p.stamps || [];
+    S.terrain = new Map(p.terrain || []);
+    S.mode = p.mode || 'square';
+    S.hexGrid = p.hexGrid || null;
     S.selStamp = null; S.boxStart = S.boxCur = null; hideStampBar();
+    syncModeChrome();
     render();
   }
   function undo() {
@@ -692,8 +938,17 @@
 
     $('btn-open').addEventListener('click', async () => { const r = await DSBridge.openImage(); if (r) loadDataUrl(r.dataUrl, r.name); });
     $('drop').addEventListener('click', async () => { const r = await DSBridge.openImage(); if (r) loadDataUrl(r.dataUrl, r.name); });
-    $('btn-auto').addEventListener('click', () => { autoGrid(); buildGridControls(); if (S.walls) { S.walls = null; S.floor = null; relock(4); relock(5); } render(); setStatus('Grid auto-detected — nudge it if needed, then Read it.'); });
-    $('btn-read').addEventListener('click', readDungeon);
+    $('btn-auto').addEventListener('click', () => {
+      if (S.mode === 'hex') {
+        S.hexGrid = DS.hex.estimateHexGrid(S.gray, S.w, S.h); recomputeHexCR(); buildHexGridControls();
+        render(); setStatus('Hex grid auto-detected — nudge it if needed, then Start painting.');
+      } else {
+        autoGrid(); buildGridControls(); if (S.walls) { S.walls = null; S.floor = null; relock(4); relock(5); }
+        render(); setStatus('Grid auto-detected — nudge it if needed, then Read it.');
+      }
+    });
+    $('btn-read').addEventListener('click', () => { if (S.mode === 'hex') startHexPainting(); else readDungeon(); });
+    document.querySelectorAll('#modeToggle .seg-btn').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 
     // read tuning (step 3) — re-run the read on change
     $('sensRange').addEventListener('input', () => {
