@@ -19,6 +19,9 @@
     floorTexture: 'flat', wallStyle: 'solid',
     // read tuning
     lineSensitivity: 0.5, invertPaper: false,
+    // "grid drawn" style (mapper inked every square): floor from cell ink, not edges.
+    // Auto-detected on read; gridDrawnTouched=true once the user sets the toggle.
+    gridDrawn: false, gridDrawnTouched: false,
     // stage view: false = editable detection overlay, true = live styled-map preview
     preview: false,
     // symbol stamps: {id,x,y,size,rotation,color,label}  (x,y normalized over grid content box)
@@ -89,6 +92,7 @@
     S.img = img; S.work = work; S.w = work.width; S.h = work.height;
     S.gray = DS.toGray(work.getContext('2d').getImageData(0, 0, w, h));
     S.walls = null; S.floor = null; S.doors = []; S.features = []; S.history = []; S.redo = [];
+    S.gridDrawn = false; S.gridDrawnTouched = false;   // re-auto-detect the style per new image
     S.stamps = []; S.selStamp = null; S.boxStart = S.boxCur = null;
     // a fresh image always returns to the default square-dungeon flow
     S.mode = 'square'; S.hexGrid = null; S.terrain = new Map();
@@ -489,6 +493,7 @@
   function sensLabel(t) {
     return t < 0.25 ? 'strict' : t < 0.45 ? 'clean' : t < 0.65 ? 'balanced' : t < 0.85 ? 'sensitive' : 'faint lines';
   }
+  function syncGridDrawnToggle() { const el = $('gridDrawnChk'); if (el) el.checked = !!S.gridDrawn; }
 
   async function readDungeon() {
     if (!S.gray) return;
@@ -496,9 +501,20 @@
     await new Promise((r) => setTimeout(r, 20));
     pushHistory();
     const gray = readGray();
-    const walls = DS.detectWalls(gray, S.w, S.h, S.grid, sensOpts());
+    const edge = DS.detectWalls(gray, S.w, S.h, S.grid, sensOpts());
+    // "Grid drawn" style: if the mapper inked most grid squares, edge detection
+    // would paint the whole grid as walls — read floor from cell ink instead.
+    // Auto-pick unless the user set the toggle themselves.
+    if (!S.gridDrawnTouched) { S.gridDrawn = DS.gridDrawnScore(edge) > 0.5; syncGridDrawnToggle(); }
+    let walls, floor;
+    if (S.gridDrawn) {
+      const cf = DS.detectFloorByInk(gray, S.w, S.h, S.grid);
+      walls = cf.walls; floor = cf.floor;
+    } else {
+      walls = edge; floor = DS.detectFloor(edge);
+    }
     S.walls = { vEdge: walls.vEdge.map((r) => Uint8Array.from(r)), hEdge: walls.hEdge.map((r) => Uint8Array.from(r)), C: walls.C, R: walls.R };
-    S.floor = DS.detectFloor(S.walls);
+    S.floor = floor;
     S.doors = DS.detectDoorways(S.walls, S.floor);
     S.features = [];
     // optional on-device enrichment (stairs/water via CoreML, numbers via Vision OCR)
@@ -506,7 +522,9 @@
     unlock(4); unlock(5); buildTools(); buildExportControls();
     const wc = countWalls(S.walls), fc = S.floor.reduce((a, b) => a + b, 0);
     $('readInfo').innerHTML = `Found <b>${wc}</b> wall segments, <b>${fc}</b> floor squares, <b>${S.doors.length}</b> doorways`
-      + (S.features.length ? `, <b>${S.features.length}</b> features` : '') + `.<br>Anything wrong? Fix it in step 4, then save.`;
+      + (S.features.length ? `, <b>${S.features.length}</b> features` : '') + `.`
+      + (S.gridDrawn ? ` <span class="mode-note">Read as a grid-drawn map.</span>` : '')
+      + `<br>Anything wrong? Fix it in step 4, then save.`;
     setStatus('Read it! Check step 4 to fix anything, then save your map.');
     render();
     showStageToggle();
@@ -1373,6 +1391,7 @@
     });
     $('sensRange').addEventListener('change', () => { if (S.gray) readDungeon(); });
     $('invertChk').addEventListener('change', () => { S.invertPaper = $('invertChk').checked; if (S.gray) readDungeon(); });
+    $('gridDrawnChk').addEventListener('change', () => { S.gridDrawn = $('gridDrawnChk').checked; S.gridDrawnTouched = true; if (S.gray) readDungeon(); });
 
     $('btn-save').addEventListener('click', saveMap);
     $('btn-roomkey').addEventListener('click', saveRoomKey);

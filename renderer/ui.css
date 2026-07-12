@@ -397,6 +397,7 @@ button:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
    read tuning (step 3)
    ============================================================ */
 .read-tuning { margin-top: var(--sp-3); }
+.mode-note { color: var(--amber-700); font-weight: 700; }
 .check {
   display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); font-weight: 600;
   color: var(--stone-800); margin-top: var(--sp-2); cursor: pointer; user-select: none;

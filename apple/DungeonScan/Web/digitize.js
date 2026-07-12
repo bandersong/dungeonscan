@@ -165,6 +165,79 @@
     return floor; // floor[r*C+c]
   }
 
+  // ---- "grid drawn" style: floor from CELL ink, walls from floor boundary ----
+  // When the mapper draws every grid square (common on graph / dot paper), every
+  // edge is inked, so edge-based wall detection paints the whole grid as walls.
+  // Instead: a CELL that holds drawn content (grid lines / shading) is room floor;
+  // blank paper is void. Walls become the floor/void boundary — the room outline.
+
+  // Mean ink (0..255) inside each cell, inset to skip the grid-line edges.
+  function cellInk(gray, W, H, grid) {
+    const { s, ox, oy, C, R } = grid;
+    const inset = Math.max(2, Math.round(s * 0.24));
+    const cm = new Float32Array(C * R);
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+      const x0 = ox + c * s + inset, x1 = ox + (c + 1) * s - inset;
+      const y0 = oy + r * s + inset, y1 = oy + (r + 1) * s - inset;
+      let sum = 0, n = 0;
+      for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) {
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        sum += 255 - gray[y * W + x]; n++;
+      }
+      cm[r * C + c] = n ? sum / n : 0;
+    }
+    return cm;
+  }
+
+  // Fraction (0..1) of INTERIOR grid edges carrying ink — high ⇒ the grid was
+  // drawn in. Reuses detectWalls' per-edge scores, so it needs no extra scan.
+  function gridDrawnScore(walls) {
+    const { vEdge, hEdge, C, R } = walls;
+    if (!vEdge || !hEdge) return 0;
+    // Fraction of INTERIOR edges the edge detector called walls. A normal dungeon
+    // (open rooms) leaves most interior edges open — low. When every square is
+    // inked, edge detection marks nearly all of them — high. That degenerate case
+    // is what "grid drawn" means, so cell-ink floor should take over.
+    let w = 0, total = 0;
+    for (let r = 0; r < R; r++) for (let c = 1; c < C; c++) { total++; if (vEdge[r][c]) w++; }
+    for (let r = 1; r < R; r++) for (let c = 0; c < C; c++) { total++; if (hEdge[r][c]) w++; }
+    return total ? w / total : 0;
+  }
+
+  // Floor = cells whose ink beats an Otsu split of the cell-ink histogram, then a
+  // light cleanup (fill lone holes / drop lone specks). Returns {floor, walls}
+  // with walls in the same shape as detectWalls so the app can use it in place.
+  function detectFloorByInk(gray, W, H, grid, opts) {
+    opts = opts || {};
+    const { C, R } = grid;
+    const cm = cellInk(gray, W, H, grid);
+    const hist = new Array(256).fill(0);
+    for (let i = 0; i < cm.length; i++) hist[Math.min(255, Math.max(0, cm[i] | 0))]++;
+    const tot = cm.length; let sumAll = 0; for (let i = 0; i < 256; i++) sumAll += i * hist[i];
+    let wB = 0, sumB = 0, best = 0, thr = 20;
+    for (let i = 0; i < 256; i++) {
+      wB += hist[i]; if (!wB) continue; const wF = tot - wB; if (!wF) break; sumB += i * hist[i];
+      const mB = sumB / wB, mF = (sumAll - sumB) / wF, v = wB * wF * (mB - mF) * (mB - mF);
+      if (v > best) { best = v; thr = i; }
+    }
+    thr = Math.max(thr * (opts.floorScale || 0.8), opts.floorMin || 12);
+    let floor = new Uint8Array(C * R);
+    for (let i = 0; i < C * R; i++) floor[i] = cm[i] > thr ? 1 : 0;
+    // one cleanup pass: fill a void cell with >=3 floor neighbours; drop a lone floor speck
+    const nb = (f, c, r) => (c < 0 || r < 0 || c >= C || r >= R) ? 0 : f[r * C + c];
+    const f2 = floor.slice();
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+      const n = nb(floor, c - 1, r) + nb(floor, c + 1, r) + nb(floor, c, r - 1) + nb(floor, c, r + 1);
+      if (!floor[r * C + c] && n >= 3) f2[r * C + c] = 1;
+      else if (floor[r * C + c] && n === 0) f2[r * C + c] = 0;
+    }
+    floor = f2;
+    const vEdge = [], hEdge = [];
+    for (let r = 0; r < R; r++) { vEdge[r] = new Uint8Array(C + 1); for (let c = 0; c <= C; c++) { const l = c > 0 ? floor[r * C + c - 1] : 0, rr = c < C ? floor[r * C + c] : 0; vEdge[r][c] = (l !== rr) ? 1 : 0; } }
+    for (let r = 0; r <= R; r++) { hEdge[r] = new Uint8Array(C); for (let c = 0; c < C; c++) { const u = r > 0 ? floor[(r - 1) * C + c] : 0, d = r < R ? floor[r * C + c] : 0; hEdge[r][c] = (u !== d) ? 1 : 0; } }
+    return { floor, walls: { vEdge, hEdge, C, R } };
+  }
+
   // ---- merge unit wall edges into minimal polylines (grid units) ----
 
   function mergeWalls(walls) {
@@ -270,6 +343,7 @@
 
   window.DS = window.DS || {};
   Object.assign(window.DS, {
-    toGray, inkField, otsu, detectWalls, detectFloor, mergeWalls, detectDoorways, edgeAccuracy, numberRooms
+    toGray, inkField, otsu, detectWalls, detectFloor, mergeWalls, detectDoorways, edgeAccuracy, numberRooms,
+    cellInk, gridDrawnScore, detectFloorByInk
   });
 })();
