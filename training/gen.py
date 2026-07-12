@@ -261,6 +261,14 @@ def one():
              "floor": floor.astype(int).tolist()}
     return out, label
 
+def _gen_to_disk(args):
+    i, outdir = args
+    random.seed(os.getpid() * 100000 + i); np.random.seed((os.getpid() * 100000 + i) % (2**32))
+    img, label = one()
+    img.save(os.path.join(outdir, f"s{i:06d}.jpg"), quality=rndi(62, 90))
+    json.dump(label, open(os.path.join(outdir, f"s{i:06d}.json"), "w"))
+    return i
+
 def main():
     outdir = sys.argv[1]; n = int(sys.argv[2]); preview = "--preview" in sys.argv
     os.makedirs(outdir, exist_ok=True)
@@ -273,12 +281,12 @@ def main():
         sheet.save(os.path.join(outdir, "preview.png"))
         print("wrote", os.path.join(outdir, "preview.png"))
         return
-    for i in range(n):
-        img, label = one()
-        img.save(os.path.join(outdir, f"s{i:06d}.jpg"), quality=rndi(62, 90))
-        json.dump(label, open(os.path.join(outdir, f"s{i:06d}.json"), "w"))
-        if i % 200 == 0: print(i, flush=True)
-    print("done", n)
+    import multiprocessing as mp, time
+    t0 = time.time()
+    with mp.Pool(mp.cpu_count()) as pool:
+        for k, _ in enumerate(pool.imap_unordered(_gen_to_disk, [(i, outdir) for i in range(n)], chunksize=16)):
+            if k % 500 == 0: print(k, f"{k/max(1e-6,time.time()-t0):.0f}/s", flush=True)
+    print("done", n, f"in {time.time()-t0:.0f}s")
 
 if __name__ == "__main__":
     random.seed(); np.random.seed()
