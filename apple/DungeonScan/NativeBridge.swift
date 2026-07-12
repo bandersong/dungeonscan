@@ -1,6 +1,7 @@
 import AppKit
 import CoreML
 import ImageIO
+import PDFKit
 import UniformTypeIdentifiers
 import Vision
 import WebKit
@@ -30,6 +31,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
         switch cmd {
         case "openImage":    openImage(replyHandler)
+        case "rasterizePdf": rasterizePdf(dict, replyHandler)
         case "openProject":  openProject(replyHandler)
         case "saveFile":     saveFile(dict, replyHandler)
         case "ocr":          ocr(dict, replyHandler)
@@ -42,30 +44,48 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     // MARK: - Commands
 
-    /// {cmd:"openImage"} -> NSOpenPanel (png/jpg/jpeg/heic/heif/tiff/gif/webp).
-    /// Returns {name, dataUrl}. Any format is normalized to a PNG data URL
-    /// (HEIC/TIFF/etc converted via CGImageSource -> NSBitmapImageRep). {} if
-    /// the user cancels.
+    /// {cmd:"openImage"} -> NSOpenPanel (png/jpg/jpeg/heic/heif/tiff/gif/webp/pdf).
+    /// Returns {name, dataUrl}. Any raster format is normalized to a PNG data URL
+    /// (HEIC/TIFF/etc via CGImageSource); a PDF (e.g. exported from an iPad drawing
+    /// app) has its first page rasterized to a white-backed PNG. {} if the user
+    /// cancels.
     private func openImage(_ reply: @escaping (Any?, String?) -> Void) {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
-        panel.allowedContentTypes = [.png, .jpeg, .heic, .heif, .tiff, .gif, .webP]
+        panel.allowedContentTypes = [.png, .jpeg, .heic, .heif, .tiff, .gif, .webP, .pdf]
         panel.prompt = "Open"
 
         guard panel.runModal() == .OK, let url = panel.url else { reply([:], nil); return }
 
         do {
-            let raw = try Data(contentsOf: url)
-            guard let dataUrl = pngDataURL(from: raw) else {
-                reply(nil, "DungeonScan: could not decode image \(url.lastPathComponent)")
+            let dataUrl: String?
+            if url.pathExtension.lowercased() == "pdf" {
+                dataUrl = pdfFirstPagePNGDataURL(from: url)
+            } else {
+                dataUrl = pngDataURL(from: try Data(contentsOf: url))
+            }
+            guard let du = dataUrl else {
+                reply(nil, "DungeonScan: could not read \(url.lastPathComponent)")
                 return
             }
-            reply(["name": url.lastPathComponent, "dataUrl": dataUrl], nil)
+            reply(["name": url.lastPathComponent, "dataUrl": du], nil)
         } catch {
             reply(nil, "DungeonScan: read failed — \(error.localizedDescription)")
         }
+    }
+
+    /// {cmd:"rasterizePdf", dataUrl:"data:application/pdf;base64,…"} -> {dataUrl}.
+    /// Used for drag-and-dropped PDFs (the Open panel rasterizes on its own). The
+    /// first page is rendered to a white-backed PNG data URL. {nil,error} on failure.
+    private func rasterizePdf(_ dict: [String: Any], _ reply: @escaping (Any?, String?) -> Void) {
+        guard let durl = dict["dataUrl"] as? String, let data = dataFromDataURL(durl),
+              let doc = PDFDocument(data: data), let page = doc.page(at: 0),
+              let out = pdfPageToPNGDataURL(page) else {
+            reply(nil, "DungeonScan: could not read that PDF"); return
+        }
+        reply(["dataUrl": out], nil)
     }
 
     /// {cmd:"openProject"} -> NSOpenPanel (.dungeonscan / .json) -> {name, text}.
@@ -319,6 +339,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
       }
       window.native = {
         openImage:    function ()             { return call({ cmd: 'openImage' }); },
+        rasterizePdf: function (dataUrl)      { return call({ cmd: 'rasterizePdf', dataUrl: dataUrl }); },
         openProject:  function ()             { return call({ cmd: 'openProject' }); },
         saveFile:     function (o)            { return call(Object.assign({ cmd: 'saveFile' }, o || {})); },
         ocr:          function (image)        { return call({ cmd: 'ocr', image: image }); },
@@ -402,6 +423,38 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// Normalize any decodable image to a PNG `data:` URL (HEIC/TIFF/etc -> PNG).
     private func pngDataURL(from data: Data) -> String? {
         guard let cg = cgImage(from: data) else { return nil }
+        let rep = NSBitmapImageRep(cgImage: cg)
+        guard let png = rep.representation(using: .png, properties: [:]) else { return nil }
+        return "data:image/png;base64," + png.base64EncodedString()
+    }
+
+    private func pdfFirstPagePNGDataURL(from url: URL) -> String? {
+        guard let doc = PDFDocument(url: url), let page = doc.page(at: 0) else { return nil }
+        return pdfPageToPNGDataURL(page)
+    }
+
+    /// Rasterize a PDF page to a white-backed PNG `data:` URL. PDFs are transparent
+    /// and vector; the digitizer wants a flat paper-white raster, so we fill white
+    /// and render the page scaled so its long edge is ~`maxDim`px (never upscaling
+    /// past 4x a tiny source). Both PDF and CGBitmapContext use a bottom-left
+    /// origin, so no y-flip is needed.
+    private func pdfPageToPNGDataURL(_ page: PDFPage, maxDim: CGFloat = 2400) -> String? {
+        let box = page.bounds(for: .mediaBox)
+        guard box.width > 0, box.height > 0 else { return nil }
+        let scale = min(max(maxDim / max(box.width, box.height), 1.0), 4.0)
+        let w = Int((box.width * scale).rounded()), h = Int((box.height * scale).rounded())
+        guard w > 0, h > 0,
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.saveGState()
+        ctx.scaleBy(x: scale, y: scale)
+        ctx.translateBy(x: -box.minX, y: -box.minY)
+        page.draw(with: .mediaBox, to: ctx)
+        ctx.restoreGState()
+        guard let cg = ctx.makeImage() else { return nil }
         let rep = NSBitmapImageRep(cgImage: cg)
         guard let png = rep.representation(using: .png, properties: [:]) else { return nil }
         return "data:image/png;base64," + png.base64EncodedString()

@@ -53,6 +53,24 @@
     img.onerror = () => setStatus('Could not read that image — try a PNG or JPG.');
     img.src = dataUrl;
   }
+  // Ingest a dropped File — an image loads directly; a PDF (e.g. exported from a
+  // drawing app) is rasterized to PNG by the native layer first.
+  function ingestFile(f) {
+    if (!f) return;
+    const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
+    const rd = new FileReader();
+    rd.onload = async () => {
+      if (isPdf) {
+        setStatus('Reading your PDF…');
+        const png = await DSBridge.rasterizePdf(rd.result);
+        if (png) loadDataUrl(png, f.name);
+        else setStatus('PDFs open inside the app — in a browser, export a PNG instead.');
+      } else {
+        loadDataUrl(rd.result, f.name);
+      }
+    };
+    rd.readAsDataURL(f);
+  }
   function setupImage(img, name) {
     const scale = Math.min(1, MAXDIM / Math.max(img.naturalWidth, img.naturalHeight));
     const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
@@ -1339,7 +1357,7 @@
     const stage = $('stageInner');
     stage.addEventListener('dragover', (e) => { e.preventDefault(); $('drop').classList.add('drag'); });
     stage.addEventListener('dragleave', () => $('drop').classList.remove('drag'));
-    stage.addEventListener('drop', (e) => { e.preventDefault(); $('drop').classList.remove('drag'); const f = e.dataTransfer.files[0]; if (f && f.type.startsWith('image/')) { const rd = new FileReader(); rd.onload = () => loadDataUrl(rd.result, f.name); rd.readAsDataURL(f); } });
+    stage.addEventListener('drop', (e) => { e.preventDefault(); $('drop').classList.remove('drag'); const f = e.dataTransfer.files[0]; if (f && (f.type.startsWith('image/') || f.type === 'application/pdf' || /\.pdf$/i.test(f.name))) ingestFile(f); });
     window.addEventListener('resize', () => { if (S.img) fitView(); });
     document.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {

@@ -27,6 +27,15 @@
         inp.click();
       });
     },
+    // Rasterize a PDF (its first page) to a PNG data URL via the native layer.
+    // Returns null in a plain browser (no PDFKit) — callers fall back with a hint.
+    async rasterizePdf(dataUrl) {
+      if (N() && N().rasterizePdf) {
+        try { const r = await N().rasterizePdf(dataUrl); return r && r.dataUrl ? r.dataUrl : null; }
+        catch (e) { return null; }
+      }
+      return null;
+    },
     // Open a saved .dungeonscan / .json project as text. Native panel when the
     // Swift bridge is present, else a hidden <input type=file> fallback.
     async openProject() {
