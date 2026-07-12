@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""
+DungeonScan synthetic map generator.
+
+Procedurally draws hand-drawn-style dungeon maps on dot-grid paper — bro's style:
+bold wobbly marker walls, dense vegetation hatching outside the rooms, doors,
+stairs, room numbers — then augments each into a "phone photo" (rotation,
+perspective keystone, lighting, paper texture, JPEG). Emits image + JSON label
+with the ground-truth grid geometry (the 4 grid corners in FINAL image pixels,
+plus cell size and per-cell floor / per-edge wall masks) for training.
+
+Deps: numpy, Pillow only.  Usage:  python gen.py OUTDIR N [--preview]
+"""
+import sys, os, json, math, random
+import numpy as np
+from PIL import Image, ImageDraw, ImageFilter
+
+# ----------------------------- small helpers -----------------------------
+def rnd(a, b): return random.uniform(a, b)
+def rndi(a, b): return random.randint(a, b)
+def jitter_pt(x, y, j): return (x + rnd(-j, j), y + rnd(-j, j))
+
+def wobbly_line(draw, p0, p1, width, color, seg=None, jit=1.4):
+    """A hand-drawn line: many short segments with perpendicular noise + width jitter."""
+    x0, y0 = p0; x1, y1 = p1
+    L = math.hypot(x1 - x0, y1 - y0)
+    if seg is None: seg = max(2, int(L / 9))
+    nx, ny = (y1 - y0) / (L + 1e-6), -(x1 - x0) / (L + 1e-6)  # perpendicular
+    pts = []
+    for i in range(seg + 1):
+        t = i / seg
+        off = rnd(-jit, jit) * math.sin(t * math.pi)  # bow out in the middle
+        px = x0 + (x1 - x0) * t + nx * off
+        py = y0 + (y1 - y0) * t + ny * off
+        pts.append((px, py))
+    for i in range(seg):
+        w = max(1, width + rnd(-0.9, 0.9))
+        draw.line([pts[i], pts[i + 1]], fill=color, width=int(round(w)))
+
+def ink(shade=0):
+    v = rndi(18, 46) + shade
+    return (v, v, max(0, v - rndi(0, 6)))
+
+# ----------------------------- layout -----------------------------
+def gen_layout(cols, rows):
+    """Return a boolean floor mask [rows,cols] of rooms + connecting corridors."""
+    floor = np.zeros((rows, cols), bool)
+    n_rooms = rndi(4, 9)
+    centers = []
+    for _ in range(n_rooms):
+        rw, rh = rndi(2, max(2, cols // 3)), rndi(2, max(2, rows // 4))
+        cx, cy = rndi(1, cols - rw - 1), rndi(1, rows - rh - 1)
+        floor[cy:cy + rh, cx:cx + rw] = True
+        centers.append((cx + rw // 2, cy + rh // 2))
+    # connect consecutive room centers with L-shaped 1-cell corridors
+    for i in range(1, len(centers)):
+        (x0, y0), (x1, y1) = centers[i - 1], centers[i]
+        for x in range(min(x0, x1), max(x0, x1) + 1): floor[y0, x] = True
+        for y in range(min(y0, y1), max(y0, y1) + 1): floor[y, x1] = True
+    return floor
+
+# ----------------------------- drawing -----------------------------
+def draw_dot_grid(draw, W, H, D, ox, oy):
+    dot = (rndi(150, 195), rndi(148, 190), rndi(135, 175))
+    y = oy % D
+    while y < H:
+        x = ox % D
+        while x < W:
+            r = rnd(0.6, 1.3)
+            jx, jy = jitter_pt(x, y, 0.4)
+            draw.ellipse([jx - r, jy - r, jx + r, jy + r], fill=dot)
+            x += D
+        y += D
+
+def draw_map(floor, cell, ox, oy, D):
+    rows, cols = floor.shape
+    W = ox + cols * cell + rndi(cell, 3 * cell)
+    H = oy + rows * cell + rndi(cell, 3 * cell)
+    # a couple hundred px margin so the page isn't edge-to-edge
+    W = int(W); H = int(H)
+    paper = (rndi(230, 243), rndi(224, 238), rndi(205, 222))
+    img = Image.new("RGB", (W, H), paper)
+    dr = ImageDraw.Draw(img)
+    draw_dot_grid(dr, W, H, D, ox % D, oy % D)
+
+    def cx(c): return ox + c * cell
+    def cy(r): return oy + r * cell
+
+    # vegetation hatching: short strokes in non-floor cells that touch a floor cell
+    for r in range(rows):
+        for c in range(cols):
+            if floor[r, c]:
+                continue
+            touch = any(0 <= r + dr_ < rows and 0 <= c + dc < cols and floor[r + dr_, c + dc]
+                        for dr_, dc in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)))
+            if not touch or random.random() < 0.15:
+                continue
+            x0, y0 = cx(c), cy(r)
+            n = rndi(6, 16)
+            for _ in range(n):
+                sx, sy = x0 + rnd(2, cell - 2), y0 + rnd(2, cell - 2)
+                ang = rnd(-1.0, 1.0) + math.pi / 2
+                ln = rnd(3, 8)
+                dr.line([(sx, sy), (sx + math.cos(ang) * ln, sy + math.sin(ang) * ln)],
+                        fill=ink(), width=1)
+
+    # walls: on every floor-cell edge adjacent to non-floor
+    ww = rnd(2.6, 4.2)
+    for r in range(rows):
+        for c in range(cols):
+            if not floor[r, c]:
+                continue
+            x0, y0, x1, y1 = cx(c), cy(r), cx(c + 1), cy(r + 1)
+            if r == 0 or not floor[r - 1, c]:
+                wobbly_line(dr, (x0, y0), (x1, y0), ww, ink())
+            if r == rows - 1 or not floor[r + 1, c]:
+                wobbly_line(dr, (x0, y1), (x1, y1), ww, ink())
+            if c == 0 or not floor[r, c - 1]:
+                wobbly_line(dr, (x0, y0), (x0, y1), ww, ink())
+            if c == cols - 1 or not floor[r, c + 1]:
+                wobbly_line(dr, (x1, y0), (x1, y1), ww, ink())
+
+    # faint interior texture marks in some floor cells (bro's tally/dots)
+    for r in range(rows):
+        for c in range(cols):
+            if floor[r, c] and random.random() < 0.25:
+                x0, y0 = cx(c), cy(r)
+                for _ in range(rndi(1, 3)):
+                    sx, sy = x0 + rnd(cell * .3, cell * .7), y0 + rnd(cell * .3, cell * .7)
+                    dr.line([(sx, sy), (sx + rnd(-3, 3), sy + rnd(2, 5))], fill=ink(40), width=1)
+
+    corners = [(ox, oy), (ox + cols * cell, oy), (ox + cols * cell, oy + rows * cell), (ox, oy + rows * cell)]
+    return img, corners
+
+# ----------------------------- augmentation -----------------------------
+def perspective_coeffs(src, dst):
+    """coeffs mapping OUTPUT(dst)->INPUT(src) for PIL Image.transform PERSPECTIVE."""
+    A = []
+    for (x, y), (X, Y) in zip(dst, src):
+        A.append([x, y, 1, 0, 0, 0, -X * x, -X * y])
+        A.append([0, 0, 0, x, y, 1, -Y * x, -Y * y])
+    A = np.array(A, float)
+    B = np.array(sum([[X, Y] for X, Y in src], []), float)
+    res = np.linalg.solve(A, B)
+    return res.tolist()
+
+def augment(img, corners):
+    W, H = img.size
+    # place on a darker "table" background with a margin, so the page has borders
+    m = rndi(20, 90)
+    bg = (rndi(20, 70), rndi(18, 62), rndi(15, 55))
+    canvas = Image.new("RGB", (W + 2 * m, H + 2 * m), bg)
+    canvas.paste(img, (m, m))
+    corners = [(x + m, y + m) for x, y in corners]
+    W2, H2 = canvas.size
+
+    # geometric: rotation + perspective, applied as one homography via corner map
+    ang = math.radians(rnd(-24, 24))
+    ca, sa = math.cos(ang), math.sin(ang)
+    cxp, cyp = W2 / 2, H2 / 2
+    def rot(p):
+        x, y = p[0] - cxp, p[1] - cyp
+        return (cxp + x * ca - y * sa, cyp + x * sa + y * ca)
+    # keystone: nudge the 4 image corners inward by random amounts
+    kp = 0.10
+    img_c = [(0, 0), (W2, 0), (W2, H2), (0, H2)]
+    warp_c = [rot((x + rnd(-kp, kp) * W2, y + rnd(-kp, kp) * H2)) for x, y in img_c]
+    # transform maps output->input; we want input(img_c)->output(warp_c), invert:
+    coeffs = perspective_coeffs(img_c, warp_c)
+    out = canvas.transform((W2, H2), Image.PERSPECTIVE, coeffs, resample=Image.BILINEAR, fillcolor=bg)
+    # move the grid corners through the same forward map
+    a, b, c, d, e, f, g, h = coeffs  # output->input
+    def fwd(p):  # input->output : invert the projective map
+        # solve for (x,y) out such that map(out)=in ; do it numerically via the inverse matrix
+        M = np.array([[a, b, c], [d, e, f], [g, h, 1]])
+        Minv = np.linalg.inv(M)
+        v = Minv @ np.array([p[0], p[1], 1.0])
+        return (v[0] / v[2], v[1] / v[2])
+    corners = [fwd(p) for p in corners]
+
+    # photometric: soft lighting gradient + vignette + white balance
+    arr = np.asarray(out).astype(np.float32)
+    yy, xx = np.mgrid[0:H2, 0:W2]
+    gx, gy = rnd(-1, 1), rnd(-1, 1)
+    grad = 1.0 + 0.18 * (gx * (xx / W2 - .5) + gy * (yy / H2 - .5))
+    r = np.sqrt((xx / W2 - .5) ** 2 + (yy / H2 - .5) ** 2)
+    vig = 1.0 - rnd(0.15, 0.4) * (r ** 2)
+    arr *= (grad * vig)[..., None]
+    arr[..., 0] *= rnd(1.0, 1.06); arr[..., 2] *= rnd(0.94, 1.0)  # warm
+    arr += np.random.normal(0, rnd(1.5, 5.0), arr.shape)
+    out = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+    if random.random() < 0.6:
+        out = out.filter(ImageFilter.GaussianBlur(rnd(0.3, 0.9)))
+    return out, corners
+
+# ----------------------------- main -----------------------------
+def one():
+    D = rndi(12, 20)                 # dot pitch
+    k = rndi(2, 4)                    # dots per cell
+    cell = D * k
+    cols, rows = rndi(8, 20), rndi(10, 26)
+    ox, oy = rndi(D, 3 * D), rndi(D, 3 * D)
+    floor = gen_layout(cols, rows)
+    img, corners = draw_map(floor, cell, ox, oy, D)
+    out, corners = augment(img, corners)
+    # normalize longest side to 1600 like the app
+    W, H = out.size
+    s = 1600 / max(W, H)
+    out = out.resize((int(W * s), int(H * s)), Image.LANCZOS)
+    corners = [(x * s, y * s) for x, y in corners]
+    label = {"corners": [[round(x, 1), round(y, 1)] for x, y in corners],
+             "cell": round(cell * s, 2), "cols": cols, "rows": rows,
+             "floor": floor.astype(int).tolist()}
+    return out, label
+
+def main():
+    outdir = sys.argv[1]; n = int(sys.argv[2]); preview = "--preview" in sys.argv
+    os.makedirs(outdir, exist_ok=True)
+    if preview:
+        cols = 3; rows = (n + cols - 1) // cols
+        thumbs = [one()[0].resize((360, 480)) for _ in range(n)]
+        sheet = Image.new("RGB", (cols * 360, rows * 480), (0, 0, 0))
+        for i, t in enumerate(thumbs):
+            sheet.paste(t, ((i % cols) * 360, (i // cols) * 480))
+        sheet.save(os.path.join(outdir, "preview.png"))
+        print("wrote", os.path.join(outdir, "preview.png"))
+        return
+    for i in range(n):
+        img, label = one()
+        img.save(os.path.join(outdir, f"s{i:06d}.jpg"), quality=rndi(62, 90))
+        json.dump(label, open(os.path.join(outdir, f"s{i:06d}.json"), "w"))
+        if i % 200 == 0: print(i, flush=True)
+    print("done", n)
+
+if __name__ == "__main__":
+    random.seed(); np.random.seed()
+    main()
