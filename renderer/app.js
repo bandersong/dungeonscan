@@ -88,10 +88,13 @@
     const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
     let work = document.createElement('canvas'); work.width = w; work.height = h;
     work.getContext('2d').drawImage(img, 0, 0, w, h);
-    // straighten a slightly-rotated phone photo before anything else
-    const de = DS.autoDeskew(work); work = de.canvas; S.deskew = de.angle;
+    // Straighten before anything else. smartDeskew tries the projection deskew AND
+    // ± the dot-lattice angle, keeping whichever the grid detector reads best — so a
+    // map drawn at an angle on the page (which projection-deskew alone mis-rotates)
+    // still comes out square.
+    const de = DS.smartDeskew(work); work = de.canvas; S.deskew = de.angle;
     S.img = img; S.work = work; S.w = work.width; S.h = work.height;
-    S.gray = DS.toGray(work.getContext('2d').getImageData(0, 0, w, h));
+    S.gray = DS.toGray(work.getContext('2d').getImageData(0, 0, work.width, work.height));
     S.walls = null; S.floor = null; S.doors = []; S.features = []; S.history = []; S.redo = [];
     S.gridDrawn = false; S.gridDrawnTouched = false;   // re-auto-detect the style per new image
     S.stamps = []; S.selStamp = null; S.boxStart = S.boxCur = null;
