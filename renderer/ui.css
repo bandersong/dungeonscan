@@ -298,6 +298,9 @@ img { outline: 1px solid rgba(0,0,0,.1); outline-offset: -1px; }
 .shead .opt { font-size: var(--fs-2xs); color: var(--stone-600); font-weight: 400; font-style: italic; font-family: var(--font-ui); }
 .sbody { padding: var(--sp-4); }
 .hint { font-size: var(--fs-xs); color: var(--stone-600); margin: 0 0 var(--sp-3); line-height: 1.5; text-wrap: pretty; }
+/* low-confidence auto-detect: make the "check the square size" hint stand out */
+.hint.warn { color: var(--amber-800); font-weight: 600; background: rgba(200,133,26,.10); border-left: 3px solid var(--amber-500); padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm); }
+.howto + .tip-off, .tip-off { background: rgba(200,133,26,.08); border: 1px solid var(--stone-200); border-radius: var(--r-sm); padding: var(--sp-2) var(--sp-3); }
 
 /* ============================================================
    buttons — one primary (amber), one secondary (slate outline),

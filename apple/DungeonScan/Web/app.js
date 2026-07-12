@@ -380,7 +380,20 @@
   function autoGrid() {
     const est = DS.estimateGrid(S.gray, S.w, S.h);
     S.grid = { s: est.s, ox: est.ox, oy: est.oy, C: est.C, R: est.R };
+    S.gridConfidence = est.confidence != null ? est.confidence : 1;
     recomputeCR();
+    reflectGridConfidence();
+  }
+  // Steer the user based on how sure auto-detect is. Hand-drawn/angled photos often
+  // come back low-confidence — say so plainly and point at the tools that fix it.
+  function reflectGridConfidence() {
+    if (S.mode !== 'square') return;
+    const hint = $('gridHint'); if (!hint) return;
+    const low = (S.gridConfidence != null && S.gridConfidence < 0.55);
+    hint.classList.toggle('warn', low);
+    hint.textContent = low
+      ? 'Double-check the square size — zoom in (bottom-right) and see if the blue lines sit on your squares. Drag the grid or use − / + to fix it.'
+      : 'Get the blue grid sitting right on top of the squares you drew. Auto-detect usually nails it.';
   }
   function recomputeCR() {
     S.grid.C = Math.max(1, Math.floor((S.w - S.grid.ox) / S.grid.s));
