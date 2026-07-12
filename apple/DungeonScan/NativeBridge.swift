@@ -36,7 +36,6 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "saveFile":     saveFile(dict, replyHandler)
         case "ocr":          ocr(dict, replyHandler)
         case "classify":     classify(dict, replyHandler)
-        case "predictGrid":  predictGrid(dict, replyHandler)
         case "vlm":          vlm(dict, replyHandler)
         case "capabilities": replyHandler(capabilities(), nil)
         default:             replyHandler(nil, "DungeonScan: unknown cmd \(cmd)")
@@ -235,27 +234,6 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
         reply(out, nil)
     }
 
-    /// {cmd:"predictGrid", image:dataURL} -> run the GridNet regressor and return
-    /// [Double] of 9 values: 4 grid corners (TL,TR,BR,BL, each x,y normalized 0..1)
-    /// then cell size / max(image side). null if GridNet isn't bundled (JS falls back
-    /// to the classical detector). The model input is a 320x320 RGB image; .scaleFill
-    /// matches training (square resize), and Vision does the resize + /255 scaling.
-    private func predictGrid(_ p: [String: Any], _ reply: @escaping (Any?, String?) -> Void) {
-        guard let durl = p["image"] as? String,
-              let data = dataFromDataURL(durl), let cg = cgImage(from: data),
-              let model = self.model(named: "GridNet") else { reply(nil, nil); return }
-        let request = VNCoreMLRequest(model: model)
-        request.imageCropAndScaleOption = .scaleFill
-        let handler = VNImageRequestHandler(cgImage: cg, orientation: .up, options: [:])
-        do { try handler.perform([request]) } catch { reply(nil, nil); return }
-        guard let obs = request.results?.first as? VNCoreMLFeatureValueObservation,
-              let arr = obs.featureValue.multiArrayValue else { reply(nil, nil); return }
-        var out: [Double] = []
-        out.reserveCapacity(arr.count)
-        for i in 0..<arr.count { out.append(arr[i].doubleValue) }
-        reply(out, nil)
-    }
-
     /// {cmd:"vlm", image (dataURL), prompt} -> POST the crop + prompt to the
     /// optional local vision-LLM (Ollama, Developer-ID build only) at
     /// http://127.0.0.1:11434/api/generate and return its `.response` string.
@@ -313,7 +291,6 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
             "ocr": true,
             "classify": model(named: "DungeonCellClassifier") != nil,
             "terrain": model(named: "TerrainClassifier") != nil,
-            "grid": model(named: "GridNet") != nil,
             // Optional local vision-LLM (Ollama, Developer-ID build only).
             // Probed synchronously with a 1s timeout — resolves in a few ms
             // when ollama serve is up, ~1s otherwise.
@@ -367,7 +344,6 @@ final class NativeBridge: NSObject, WKScriptMessageHandlerWithReply {
         saveFile:     function (o)            { return call(Object.assign({ cmd: 'saveFile' }, o || {})); },
         ocr:          function (image)        { return call({ cmd: 'ocr', image: image }); },
         classify:     function (crops, model) { return call({ cmd: 'classify', crops: crops, model: model }); },
-        predictGrid:  function (image)        { return call({ cmd: 'predictGrid', image: image }); },
         vlm:          function (image, prompt){ return call({ cmd: 'vlm', image: image, prompt: prompt }); },
         capabilities: function ()             { return call({ cmd: 'capabilities' }); }
       };

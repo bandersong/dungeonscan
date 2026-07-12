@@ -83,23 +83,15 @@
     };
     rd.readAsDataURL(f);
   }
-  async function setupImage(img, name) {
+  function setupImage(img, name) {
     const scale = Math.min(1, MAXDIM / Math.max(img.naturalWidth, img.naturalHeight));
     const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
     let work = document.createElement('canvas'); work.width = w; work.height = h;
     work.getContext('2d').drawImage(img, 0, 0, w, h);
-    // On-device GridNet (if bundled): predict the grid's 4 corners → de-warp the
-    // page so rotation AND perspective are removed in one shot, and take its cell-size
-    // as an octave hint. Falls back silently to the classical path when unavailable
-    // or when the predicted quad looks wrong.
-    S.gridCellHint = 0;
-    if (S.caps && S.caps.grid) {
-      const g = await gridNetRectify(work);
-      if (g) { work = g.canvas; S.gridCellHint = g.cell; }
-    }
-    // Straighten. smartDeskew tries the projection deskew AND ± the dot-lattice angle,
-    // keeping whichever the grid detector reads best — residual rotation after (or
-    // instead of) the GridNet warp.
+    // Straighten before anything else. smartDeskew tries the projection deskew AND
+    // ± the dot-lattice angle, keeping whichever the grid detector reads best — so a
+    // map drawn at an angle on the page (which projection-deskew alone mis-rotates)
+    // still comes out square.
     const de = DS.smartDeskew(work); work = de.canvas; S.deskew = de.angle;
     S.img = img; S.work = work; S.w = work.width; S.h = work.height;
     S.gray = DS.toGray(work.getContext('2d').getImageData(0, 0, work.width, work.height));
@@ -112,7 +104,7 @@
     // and clears any in-progress perspective / project metadata
     S.corners = null; S.perspActive = false; S.dragCorner = null; S.projectName = '';
     syncModeChrome();
-    view.width = S.w; view.height = S.h;   // rectify/deskew may change dimensions
+    view.width = w; view.height = h;
     $('drop').classList.add('hidden');
     hideStampBar();
     S.preview = false;
@@ -389,42 +381,11 @@
 
   // ---------- grid ----------
   function autoGrid() {
-    const est = DS.estimateGrid(S.gray, S.w, S.h, { cellHint: S.gridCellHint || 0 });
+    const est = DS.estimateGrid(S.gray, S.w, S.h);
     S.grid = { s: est.s, ox: est.ox, oy: est.oy, C: est.C, R: est.R };
     S.gridConfidence = est.confidence != null ? est.confidence : 1;
     recomputeCR();
     reflectGridConfidence();
-  }
-  // GridNet: predict the 4 grid corners, de-warp the page to remove rotation +
-  // perspective, and return the rectified canvas + cell-size hint. null if the model
-  // is absent, errors, or the predicted quad fails a sanity check.
-  async function gridNetRectify(cv) {
-    try {
-      const W = cv.width, H = cv.height;
-      const r = await DSBridge.predictGrid(cv.toDataURL('image/jpeg', 0.9));
-      if (!r || r.length < 9) return null;
-      const q = [];
-      for (let k = 0; k < 4; k++) q.push({ x: r[k * 2] * W, y: r[k * 2 + 1] * H });
-      if (!validQuad(q, W, H)) return null;
-      const rect = DS.perspective.correct(cv, q);
-      if (!rect || rect.width < 40 || rect.height < 40) return null;
-      return { canvas: rect, cell: r[8] * Math.max(W, H) };
-    } catch (_) { return null; }
-  }
-  // A predicted quad is usable if it's convex, covers a real fraction of the frame,
-  // and its corners aren't wildly outside the image.
-  function validQuad(q, W, H) {
-    const m = 0.25;
-    for (const p of q) if (p.x < -m * W || p.x > (1 + m) * W || p.y < -m * H || p.y > (1 + m) * H) return false;
-    let a = 0; for (let i = 0; i < 4; i++) { const p = q[i], n = q[(i + 1) % 4]; a += p.x * n.y - n.x * p.y; }
-    if (Math.abs(a) / 2 < 0.15 * W * H) return false;
-    let pos = 0, neg = 0;
-    for (let i = 0; i < 4; i++) {
-      const A = q[i], B = q[(i + 1) % 4], C = q[(i + 2) % 4];
-      const cr = (B.x - A.x) * (C.y - B.y) - (B.y - A.y) * (C.x - B.x);
-      if (cr > 0) pos++; else if (cr < 0) neg++;
-    }
-    return pos === 0 || neg === 0;
   }
   // Steer the user based on how sure auto-detect is. Hand-drawn/angled photos often
   // come back low-confidence — say so plainly and point at the tools that fix it.
