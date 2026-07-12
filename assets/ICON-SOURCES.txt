@@ -1,0 +1,11 @@
+Per-icon sources (game-icons.net, CC BY 3.0 — https://creativecommons.org/licenses/by/3.0/)
+Icons were modified: recolored to a single ink color and background removed.
+
+Author  : Icons
+Lorc    : anchor bridge campfire capitol coffin compass crossed-swords cultist dripping-blade field fountain ghost hanging-spider key lantern lever minotaur mining mountains oak padlock pine-tree sea-serpent snake spider-web spiky-explosion stone-tower tombstone treasure-map valley volcano waves wheat wolf-trap wooden-door wooden-sign
+Delapouite : barn bat bookshelf cactus castle castle-ruins chest church crypt-entrance desert dungeon-gate forest gargoyle gate greek-temple hills hut ionic-column island lighthouse mimic-chest mine-wagon mummy-head palm-tree rat river road sarcophagus ship-wheel stairs stone-bust swamp torch tower-flag village watchtower well windmill
+Skoll   : box-trap open-treasure-chest skeleton troll
+Faithtoken : dragon-head
+Sbed    : spikes
+Caro Asercion : goblin
+game-icons badges set : skull water

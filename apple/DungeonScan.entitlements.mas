@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Entitlements for the MAC APP STORE build of DungeonScan. This is the
+    ScrubBuddy MAS set (entitlements-mas.plist) MINUS the MLX key: CoreML +
+    Vision do NOT allocate unsigned executable memory, so
+    com.apple.security.cs.allow-unsigned-executable-memory is DROPPED — a
+    cleaner, tighter sandbox than ScrubBuddy could ship.
+
+    App Sandbox is MANDATORY for the store. Under it, $HOME redirects into
+    ~/Library/Containers/<bundle-id>/Data/ so all app state follows the app.
+  -->
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+
+  <!--
+    WKWebView (the UI is local HTML loaded from the bundle — no http server,
+    no remote URL) renders BLANK under the sandbox without network-client, so
+    this is required even though the page makes zero outbound requests. Privacy
+    label stays "Data Not Collected".
+  -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+
+  <!--
+    Powerbox file access: the user picks an image via NSOpenPanel and saves a
+    scan/VTT/JSON result via NSSavePanel. user-selected.read-write grants access
+    only to files the user explicitly chooses — the sandbox-correct way.
+  -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+
+  <!--
+    Security-scoped bookmarks: NativeBridge.saveFile persists a bookmark to the
+    chosen save URL (bookmarkData(.withSecurityScope)) so a later launch can
+    resolve it. user-selected.read-write only covers the LIVE panel selection;
+    durable reuse across launches needs this key or the resolve silently fails.
+  -->
+  <key>com.apple.security.files.bookmarks.app-scope</key>
+  <true/>
+</dict>
+</plist>

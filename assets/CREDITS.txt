@@ -1,0 +1,40 @@
+MapSmith — Art & Font Credits
+=============================
+
+MAP SYMBOLS
+-----------
+The map symbols (mountains, castles, forests, dungeons, etc.) come from
+game-icons.net and are used under the Creative Commons Attribution 3.0
+license (CC BY 3.0): https://creativecommons.org/licenses/by/3.0/
+
+Artists whose icons are included:
+  • Lorc         — https://lorcblog.blogspot.com/
+  • Delapouite   — https://delapouite.com/
+  • Skoll
+  • Faithtoken
+  • game-icons.net "badges" set
+
+Source: https://game-icons.net/  and  https://github.com/game-icons/icons
+
+
+FONTS
+-----
+All fonts are licensed under the SIL Open Font License, Version 1.1
+(https://scripts.sil.org/OFL):
+
+  • Uncial Antiqua   — © Astigmatic (AOETI)
+  • MedievalSharp    — © Wojciech Kalinowski
+  • Pirata One       — © Rodrigo Fuenzalida & Nicolas Massi
+  • IM Fell English  — © Igino Marini (iginomarini.com)
+  • EB Garamond      — © Georg Duffner & Octavio Pardo
+
+A copy of the Open Font License is included at assets/fonts/OFL.txt.
+
+
+EVERYTHING ELSE
+---------------
+The parchment textures, stains, coffee rings, compass roses, decorative
+borders, scale bars and title cartouches are all drawn by MapSmith itself
+in code, so they stay crisp at any print size and carry no extra licenses.
+
+Thank you to all of these artists and type designers. 💛

@@ -1,0 +1,65 @@
+{
+  "name": "dungeonscan",
+  "productName": "DungeonScan",
+  "version": "0.1.0",
+  "description": "Reads a photo of a hand-drawn grid dungeon and rebuilds it as a clean battle map + VTT.",
+  "main": "main.js",
+  "author": "bandersong",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist:devid": "NOTARIZE=1 CSC_IDENTITY_AUTO_DISCOVERY=true electron-builder --mac dmg zip --universal",
+    "dist:mas": "electron-builder --mac mas",
+    "dist:masdev": "electron-builder --mac mas-dev"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "io.github.bandersong.dungeonscan",
+    "productName": "DungeonScan",
+    "afterSign": "build/notarize.js",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "assets/**/*",
+      "native/bin/**/*",
+      "models/*.mlpackage/**/*",
+      "!assets/icons/**"
+    ],
+    "extraResources": [
+      { "from": "native/bin", "to": "bin" },
+      { "from": "models", "to": "models", "filter": ["*.mlpackage/**"] }
+    ],
+    "mac": {
+      "category": "public.app-category.graphics-design",
+      "target": [
+        { "target": "dmg", "arch": ["universal"] },
+        { "target": "zip", "arch": ["universal"] }
+      ],
+      "icon": "assets/appicon.png",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.devid.plist",
+      "entitlementsInherit": "build/entitlements.devid.plist"
+    },
+    "mas": {
+      "type": "distribution",
+      "category": "public.app-category.graphics-design",
+      "icon": "assets/appicon.png",
+      "hardenedRuntime": false,
+      "entitlements": "build/entitlements.mas.plist",
+      "entitlementsInherit": "build/entitlements.mas.inherit.plist",
+      "provisioningProfile": "build/DungeonScan_MAS.provisionprofile"
+    },
+    "masDev": {
+      "type": "development",
+      "entitlements": "build/entitlements.mas.plist",
+      "entitlementsInherit": "build/entitlements.mas.inherit.plist",
+      "provisioningProfile": "build/DungeonScan_MAS_Dev.provisionprofile"
+    },
+    "dmg": { "title": "Install DungeonScan", "backgroundColor": "#141a12", "format": "UDBZ" }
+  }
+}

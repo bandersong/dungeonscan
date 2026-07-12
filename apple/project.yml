@@ -1,0 +1,60 @@
+name: DungeonScan
+options:
+  bundleIdPrefix: io.github.bandersong.dungeonscan
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+# Native macOS shell for DungeonScan. Modeled on the proven ScrubBuddy
+# WKWebView + MAS-sandbox pattern, but NO MLX: document/dungeon-cell perception
+# is Apple Vision (OCR) + CoreML (classification) only. That means no SwiftPM
+# packages and the MAS entitlements can DROP com.apple.security.cs.allow-
+# unsigned-executable-memory (CoreML/Vision don't need executable memory), so
+# the store build stays cleaner than ScrubBuddy's.
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    # Ad-hoc sign locally (no paid team yet). Sandbox/MAS entitlements are wired
+    # below via CODE_SIGN_ENTITLEMENTS and applied at the real codesign step in
+    # build_mas.sh — mirroring ScrubBuddy's build_swift_mas.sh.
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_IDENTITY: "-"
+
+targets:
+  DungeonScan:
+    type: application
+    platform: macOS
+    sources:
+      # Swift sources (main, AppDelegate, NativeBridge).
+      - path: DungeonScan
+        excludes:
+          - Web
+          # Bundled below as explicit resources (folder ref / plain file).
+          - DungeonCellClassifier.mlmodelc
+          - labels.json
+      # The HTML/JS UI ships as bundled resources (Web/index.html + siblings).
+      - path: DungeonScan/Web
+        buildPhase: resources
+      # CoreML cell classifier — compiled .mlmodelc bundle copied whole into
+      # Resources as a folder reference so the internal model0/model1/...
+      # structure is preserved (NOT expanded into individual files). Lands at
+      # DungeonScan.app/Contents/Resources/DungeonCellClassifier.mlmodelc.
+      - path: DungeonScan/DungeonCellClassifier.mlmodelc
+        buildPhase: resources
+        type: folder
+      # Class-label vocabulary shipped next to the model.
+      - path: DungeonScan/labels.json
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.bandersong.dungeonscan
+        INFOPLIST_FILE: DungeonScan/Info.plist
+        # App Sandbox MAS entitlements (sandbox + network.client +
+        # user-selected.read-write + bookmarks.app-scope). Applied by the
+        # codesign step; ignored when CODE_SIGNING_ALLOWED=NO in local builds.
+        CODE_SIGN_ENTITLEMENTS: DungeonScan.entitlements.mas
+        ENABLE_HARDENED_RUNTIME: YES

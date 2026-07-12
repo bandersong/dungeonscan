@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Developer-ID (direct-download) build: Hardened Runtime only, NO App Sandbox.
+    CoreML + Vision need no special entitlements (no JIT, no unsigned memory),
+    so this file is intentionally empty — the Hardened Runtime flag itself is
+    applied at codesign time via `codesign --options runtime` (see
+    build_devid.sh), not via an entitlement key.
+  -->
+</dict>
+</plist>

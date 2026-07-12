@@ -1,0 +1,8 @@
+apple/build/
+apple/DungeonScan.xcodeproj/
+dist/
+training/dataset/
+training/dataset_split/
+*.xcarchive
+.DS_Store
+node_modules/

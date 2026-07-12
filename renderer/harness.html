@@ -1,0 +1,76 @@
+<meta charset="utf-8" />
+<title>DungeonScan — pipeline proof</title>
+<style>
+  body { background:#14181f; color:#e8e2d2; font-family:-apple-system,system-ui,sans-serif; margin:0; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; } .sub{color:#8fa0ad;font-size:13px;margin-bottom:14px;}
+  .agg { background:#1c232c; border:1px solid #2c3742; border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:14px; }
+  .agg b { color:#7fd18c; } .bad{color:#e08a8a;}
+  .row { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin-bottom:16px; }
+  .cell { background:#1c232c; border:1px solid #2c3742; border-radius:10px; padding:8px; }
+  .cell h3 { margin:0 0 6px; font-size:12px; color:#a9b7c2; font-weight:600; }
+  canvas { width:100%; height:auto; display:block; border-radius:6px; background:#0e1116; image-rendering:auto; }
+  .metrics { font-size:11.5px; color:#9fb0bc; margin-top:5px; line-height:1.45; }
+  .metrics b{color:#e8e2d2;}
+</style>
+<h1>DungeonScan — digitizer proof</h1>
+<div class="sub">Synthetic hand-drawn grid dungeons → detect grid → read walls → floor → clean map + Universal VTT. Green=correct wall, red=false wall, blue=missed wall.</div>
+<div id="agg" class="agg">running…</div>
+<div id="grid"></div>
+
+<script src="digitize.js"></script>
+<script src="grid.js"></script>
+<script src="vtt.js"></script>
+<script src="testgen.js"></script>
+<script src="render.js"></script>
+<script>
+function overlay(g, walls) {
+  const cv = document.createElement('canvas'); cv.width=g.W; cv.height=g.H;
+  const x = cv.getContext('2d'); x.drawImage(g.canvas,0,0);
+  const {s,ox,oy,C,R}=g.grid; x.lineWidth=Math.max(2,s*0.12); x.lineCap='round';
+  const line=(x0,y0,x1,y1,col)=>{x.strokeStyle=col;x.beginPath();x.moveTo(x0,y0);x.lineTo(x1,y1);x.stroke();};
+  for(let r=0;r<R;r++)for(let c=0;c<=C;c++){const p=walls.vEdge[r][c],t=g.truth.vEdge[r][c];const X=ox+c*s,Y0=oy+r*s,Y1=oy+(r+1)*s;
+    if(p&&t)line(X,Y0,X,Y1,'rgba(70,220,110,0.85)');else if(p&&!t)line(X,Y0,X,Y1,'rgba(235,90,90,0.9)');else if(!p&&t)line(X,Y0,X,Y1,'rgba(90,150,235,0.9)');}
+  for(let r=0;r<=R;r++)for(let c=0;c<C;c++){const p=walls.hEdge[r][c],t=g.truth.hEdge[r][c];const Y=oy+r*s,X0=ox+c*s,X1=ox+(c+1)*s;
+    if(p&&t)line(X0,Y,X1,Y,'rgba(70,220,110,0.85)');else if(p&&!t)line(X0,Y,X1,Y,'rgba(235,90,90,0.9)');else if(!p&&t)line(X0,Y,X1,Y,'rgba(90,150,235,0.9)');}
+  return cv;
+}
+function show(parent, title, canvas){ const d=document.createElement('div'); d.className='cell';
+  const h=document.createElement('h3'); h.textContent=title; d.appendChild(h); d.appendChild(canvas); parent.appendChild(d); return d; }
+
+const seeds=[7,21,42,101];
+let sumF1=0, sumP=0, sumR=0, gridHits=0, vttOk=0;
+const gridEl=document.getElementById('grid');
+seeds.forEach(seed=>{
+  const g = DS.testgen({seed, C:30, R:22, cell:26});
+  const gctx=g.canvas.getContext('2d'); const img=gctx.getImageData(0,0,g.W,g.H);
+  const gray=DS.toGray(img);
+  const est=DS.estimateGrid(gray,g.W,g.H);
+  const gridClose = Math.abs(est.s-g.grid.s)<=2 && Math.abs(est.ox-g.grid.ox)<=3 && Math.abs(est.oy-g.grid.oy)<=3;
+  if(gridClose) gridHits++;
+  // wall detection on the (user-lockable) TRUE grid
+  const walls=DS.detectWalls(gray,g.W,g.H,g.grid);
+  const acc=DS.edgeAccuracy(walls,g.truth);
+  const floor=DS.detectFloor(walls);
+  const clean=DS.renderBattleMap({walls,floor,C:g.grid.C,R:g.grid.R,ppg:64});
+  const uvtt=DS.buildUVTT({walls,doors:[],pixelsPerGrid:64,imageBase64:clean.toDataURL('image/png').split(',')[1]});
+  const val=DS.validateUVTT(uvtt);
+  if(val.ok) vttOk++;
+  sumF1+=acc.f1; sumP+=acc.precision; sumR+=acc.recall;
+
+  const row=document.createElement('div'); row.className='row';
+  show(row,'input (synthetic photo)', g.canvas);
+  show(row,'detected walls vs truth', overlay(g,walls));
+  const cleanCell=show(row,'clean battle map', clean);
+  const info=document.createElement('div'); info.className='metrics';
+  info.innerHTML=`seed ${seed} · wall F1 <b>${(acc.f1*100).toFixed(1)}%</b> (P ${(acc.precision*100).toFixed(0)} / R ${(acc.recall*100).toFixed(0)})<br>`+
+    `grid est s=${est.s} ox=${est.ox} oy=${est.oy} vs true s=${g.grid.s} ox=${g.grid.ox} oy=${g.grid.oy} → ${gridClose?'<b>lock✓</b>':'<span class=bad>off</span>'}<br>`+
+    `floor cells ${floor.reduce((a,b)=>a+b,0)} · VTT walls ${uvtt.line_of_sight.length} · valid ${val.ok?'<b>yes</b>':'<span class=bad>'+val.errors+'</span>'}`;
+  cleanCell.appendChild(info);
+  gridEl.appendChild(row);
+});
+const n=seeds.length;
+document.getElementById('agg').innerHTML =
+  `<b>Wall detection F1 ${(sumF1/n*100).toFixed(1)}%</b> · precision ${(sumP/n*100).toFixed(1)}% · recall ${(sumR/n*100).toFixed(1)}% `+
+  `· grid auto-lock ${gridHits}/${n} · VTT valid ${vttOk}/${n} · (${n} dungeons)`;
+document.title = `DungeonScan proof — F1 ${(sumF1/n*100).toFixed(0)}%`;
+</script>
