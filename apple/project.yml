@@ -14,7 +14,7 @@ options:
 # the store build stays cleaner than ScrubBuddy's.
 settings:
   base:
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
     # Ad-hoc sign locally (no paid team yet). Sandbox/MAS entitlements are wired
@@ -38,6 +38,7 @@ targets:
           - TerrainClassifier.mlmodelc
           - labels.json
           - terrain_labels.json
+          - AppIcon.icns
       # The HTML/JS UI ships as bundled resources (Web/index.html + siblings).
       - path: DungeonScan/Web
         buildPhase: resources
@@ -58,6 +59,9 @@ targets:
       - path: DungeonScan/labels.json
         buildPhase: resources
       - path: DungeonScan/terrain_labels.json
+        buildPhase: resources
+      # App icon (raw .icns; referenced by CFBundleIconFile=AppIcon in Info.plist).
+      - path: DungeonScan/AppIcon.icns
         buildPhase: resources
     settings:
       base:

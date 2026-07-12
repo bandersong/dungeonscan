@@ -121,12 +121,60 @@ ZIP="$DIST/DungeonScan-${VERSION}.zip"
 STAGE="$DIST/dmg-stage"
 
 # DMG: .app + /Applications symlink (drag-to-install), UDZO compressed.
+VOL="DungeonScan"
 rm -rf "$STAGE"; mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 rm -f "$DMG"
-hdiutil create -volname "DungeonScan" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
-echo "    DMG: $DMG ($(du -sh "$DMG" | cut -f1))"
+
+# Professional styled DMG: an icon-view window with the app on the left and an
+# Applications folder on the right to drag onto. Needs Finder (a GUI session);
+# the first run may show a one-time "Terminal wants to control Finder" prompt —
+# click OK. Falls back to a plain (still drag-to-Applications) DMG if styling
+# can't run. Guarded command-by-command so `set -e` can't abort the release.
+make_styled_dmg() {
+  local rw="$DIST/rw.dmg" dev=""
+  rm -f "$rw"
+  hdiutil create -volname "$VOL" -srcfolder "$STAGE" -fs HFS+ -format UDRW -ov "$rw" >/dev/null || return 1
+  dev=$(hdiutil attach -readwrite -noverify -noautoopen "$rw" 2>/dev/null | egrep '^/dev/' | head -1 | awk '{print $1}')
+  [[ -n "$dev" ]] || { rm -f "$rw"; return 1; }
+  sleep 1
+  osascript >/dev/null 2>&1 <<OSA || true
+tell application "Finder"
+  tell disk "$VOL"
+    open
+    set current view of container window to icon view
+    set toolbar visible of container window to false
+    set statusbar visible of container window to false
+    set the bounds of container window to {200, 140, 720, 470}
+    set opts to the icon view options of container window
+    set arrangement of opts to not arranged
+    set icon size of opts to 104
+    try
+      set position of item "DungeonScan.app" of container window to {140, 160}
+      set position of item "Applications" of container window to {380, 160}
+    end try
+    update without registering applications
+    delay 1
+    close
+  end tell
+end tell
+OSA
+  sync; sleep 1
+  hdiutil detach "$dev" >/dev/null 2>&1 || { sleep 2; hdiutil detach "$dev" -force >/dev/null 2>&1; }
+  hdiutil convert "$rw" -format UDZO -imagekey zlib-level=9 -ov -o "$DMG" >/dev/null || { rm -f "$rw"; return 1; }
+  rm -f "$rw"
+  [[ -f "$DMG" ]]
+}
+
+if make_styled_dmg; then
+  echo "    DMG (styled): $DMG ($(du -sh "$DMG" | cut -f1))"
+else
+  echo "    (styled DMG unavailable — building a plain drag-to-Applications DMG)"
+  rm -f "$DMG"
+  hdiutil create -volname "$VOL" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+  echo "    DMG (plain): $DMG ($(du -sh "$DMG" | cut -f1))"
+fi
 
 # ZIP: ditto preserves bundle layout + extended attrs. NEVER use zip(1) — it
 # strips resource forks and breaks the code signature.
