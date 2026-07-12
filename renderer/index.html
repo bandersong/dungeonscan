@@ -8,6 +8,7 @@
     <div class="brand"><span class="logo">🗺️</span> DungeonScan <span class="tag">your drawing → a real map</span></div>
     <div class="top-actions">
       <button id="btn-undo" class="ghost">↺ Undo</button>
+      <button id="btn-redo" class="ghost">↻ Redo</button>
       <button id="btn-help" class="help">❓ How it works</button>
     </div>
   </header>
@@ -50,6 +51,13 @@
         <div class="sbody">
           <button id="btn-read" class="primary wide big">🔍 Read my dungeon</button>
           <div id="readInfo" class="readinfo"></div>
+          <div class="controls read-tuning">
+            <div class="ctl">
+              <label><span>Line sensitivity</span><span class="v" id="sensVal">balanced</span></label>
+              <input id="sensRange" type="range" min="0" max="100" value="50" />
+            </div>
+            <label class="check"><input id="invertChk" type="checkbox" /> Invert (white ink on dark paper)</label>
+          </div>
         </div>
       </div>
       <!-- step 4 -->
@@ -58,6 +66,10 @@
         <div class="sbody">
           <div id="tools" class="tools"></div>
           <p class="hint" id="toolHint">Pick a tool, then click on the map. Walls snap to the grid lines.</p>
+          <details class="symbols">
+            <summary>Symbols — drop icons on the map</summary>
+            <div id="stampPalette" class="stamp-palette"></div>
+          </details>
         </div>
       </div>
       <!-- step 5 -->
@@ -65,8 +77,18 @@
         <div class="shead"><span class="n">5</span> Save your map</div>
         <div class="sbody">
           <div id="exportControls" class="controls"></div>
-          <button id="btn-png" class="save wide">💾 Save battle map (PNG)</button>
-          <button id="btn-vtt" class="save vtt wide">🎲 Save for Foundry / Roll20 (VTT)</button>
+          <div class="export-grid">
+            <div class="ctl">
+              <label><span>Format</span></label>
+              <select id="exportFormat"></select>
+            </div>
+            <div class="ctl ips-wrap hidden" id="ipsWrap">
+              <label><span>Inches / square</span></label>
+              <input id="ipsInput" type="number" min="0.25" max="4" step="0.25" value="1" />
+            </div>
+          </div>
+          <button id="btn-save" class="save wide">💾 Save PNG</button>
+          <button id="btn-roomkey" class="btn-secondary wide">🏷️ Save room key (.txt)</button>
           <div id="saveNote" class="savenote"></div>
         </div>
       </div>
@@ -81,8 +103,8 @@
       <li><b>Add a photo</b> of a dungeon you drew on grid/graph paper.</li>
       <li><b>Line up the grid</b> so the blue lines sit on your squares (Auto-detect does it for you).</li>
       <li><b>Read it</b> — the app finds your walls, rooms, doors and stairs.</li>
-      <li><b>Fix anything</b> it got wrong by tapping — add or remove a wall, drop a door.</li>
-      <li><b>Save</b> a clean battle map, or a VTT file you load straight into Foundry or Roll20.</li>
+      <li><b>Fix anything</b> it got wrong by tapping — add or remove a wall, drop a door, draw a room, or stamp a symbol.</li>
+      <li><b>Save</b> a clean battle map (PNG/PDF), a tiled print-out, or a VTT file you load straight into Foundry or Roll20.</li>
     </ol>
     <p class="small">Everything runs on your Mac. Nothing is uploaded. The reading uses Apple's on-device Vision and a small model that lives inside the app.</p>
     <button class="primary wide" data-close>Got it</button>
@@ -96,6 +118,10 @@
 <script src="grid.js"></script>
 <script src="vtt.js"></script>
 <script src="render.js"></script>
+<script src="export.js"></script>
+<script src="icons-meta.js"></script>
+<script src="icons-data.js"></script>
+<script src="stamps.js"></script>
 <script src="testgen.js"></script>
 <script src="samples.js"></script>
 <script src="bridge.js"></script>
