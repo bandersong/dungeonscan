@@ -19,6 +19,8 @@
     floorTexture: 'flat', wallStyle: 'solid',
     // read tuning
     lineSensitivity: 0.5, invertPaper: false,
+    // stage view: false = editable detection overlay, true = live styled-map preview
+    preview: false,
     // symbol stamps: {id,x,y,size,rotation,color,label}  (x,y normalized over grid content box)
     stamps: [], selStamp: null, dragStamp: false, dragOff: null,
     // room-box drag preview
@@ -71,6 +73,8 @@
     view.width = w; view.height = h;
     $('drop').classList.add('hidden');
     hideStampBar();
+    S.preview = false;
+    if ($('stageToggle')) $('stageToggle').classList.add('hidden');   // hidden until a map is read
     autoGrid();
     buildGridControls();
     unlock(2); unlock(3); relock(4); relock(5);
@@ -479,6 +483,7 @@
       + (S.features.length ? `, <b>${S.features.length}</b> features` : '') + `.<br>Anything wrong? Fix it in step 4, then save.`;
     setStatus('Read it! Check step 4 to fix anything, then save your map.');
     render();
+    showStageToggle();
   }
 
   async function enrich(gray) {
@@ -538,7 +543,7 @@
     for (const t of TOOLS) {
       const b = document.createElement('button'); b.className = 'tool' + (t.id === S.tool ? ' on' : '');
       b.innerHTML = `<span class="ic">${t.ic}</span> ${t.label}`;
-      b.addEventListener('click', () => { S.tool = t.id; buildTools(); updateToolHint(); });
+      b.addEventListener('click', () => { S.tool = t.id; buildTools(); updateToolHint(); if (S.preview) setStageMode('edit'); });
       el.appendChild(b);
     }
     updateToolHint();
@@ -587,6 +592,7 @@
     $('readInfo').innerHTML = 'Paint terrain onto the hexes in <b>step 4</b>, then save your hex map in <b>step 5</b>.';
     setStatus('Hex map ready — paint terrain in step 4.');
     render();
+    showStageToggle();
   }
 
   function nearestEdge(ix, iy) {
@@ -757,6 +763,7 @@
     if (erase) S.terrain.delete(key); else S.terrain.set(key, S.hexTerrain);
   }
   view.addEventListener('pointerdown', (ev) => {
+    if (S.preview) return;                  // stage is showing the styled preview, not editable
     const p = toImg(ev);
     // perspective corner-dragging swallows all stage input while active
     if (S.perspActive) {
@@ -825,6 +832,11 @@
 
   // ---------- rendering the stage ----------
   function render() {
+    // render() always draws the edit view; if a preview left the canvas resized
+    // (or preview flag stale), snap back to the working-image dimensions first.
+    if (S.preview) { S.preview = false; syncStageToggle(); }
+    view.classList.remove('viewing');
+    if (S.w && (view.width !== S.w || view.height !== S.h)) { view.width = S.w; view.height = S.h; fitView(); }
     vctx.clearRect(0, 0, view.width, view.height);
     if (S.work) vctx.drawImage(S.work, 0, 0);
     if (S.mode === 'hex') { renderHexOverlay(); drawPerspectiveOverlay(); return; }
@@ -882,6 +894,57 @@
     }
     drawPerspectiveOverlay();
   }
+
+  // ---------- live styled-map preview ----------
+  // The stage normally shows the editable detection overlay (walls/floor/doors on
+  // the photo). Preview mode swaps in the actual styled battle-map they're about to
+  // save, re-rendered live as they change any "Save your map" control — so the look
+  // is never picked blind. An Edit/Preview toggle sits on the stage once a map is read.
+  function buildStageToggle() {
+    if ($('stageToggle')) return;
+    const t = document.createElement('div');
+    t.id = 'stageToggle'; t.className = 'stage-toggle hidden';
+    t.innerHTML = '<button type="button" class="stg-seg on" data-view="edit">✏️ Edit</button>'
+      + '<button type="button" class="stg-seg" data-view="preview">✨ Preview</button>';
+    t.querySelectorAll('.stg-seg').forEach((b) => b.addEventListener('click', () => setStageMode(b.dataset.view)));
+    $('stageInner').appendChild(t);
+  }
+  function showStageToggle() { buildStageToggle(); $('stageToggle').classList.remove('hidden'); syncStageToggle(); }
+  function syncStageToggle() {
+    const t = $('stageToggle'); if (!t) return;
+    t.querySelectorAll('.stg-seg').forEach((b) => b.classList.toggle('on', (b.dataset.view === 'preview') === !!S.preview));
+  }
+  // switch the stage between the editable overlay and the styled preview
+  function setStageMode(mode) {
+    const want = mode === 'preview';
+    if (want && !editReady()) return;
+    S.preview = want;
+    syncStageToggle();
+    if (want) { renderPreviewSoon(); }
+    else { view.width = S.w; view.height = S.h; fitView(); render(); setStatus('Editing — fix anything in step 4, then style + save in step 5.'); }
+  }
+  // coalesce bursts (e.g. dragging the opacity/color slider) into one render.
+  // setTimeout (not rAF) so it fires even when the window isn't actively painting.
+  let _previewTimer = null;
+  function renderPreviewSoon() {
+    if (_previewTimer) clearTimeout(_previewTimer);
+    _previewTimer = setTimeout(() => { _previewTimer = null; if (S.preview) renderPreview(); }, 30);
+  }
+  async function renderPreview() {
+    if (!editReady()) { setStageMode('edit'); return; }
+    setStatus('Preview of your saved map — change the look in step 5, or hit Edit to keep fixing.');
+    const c = await cleanCanvas();
+    if (!S.preview) return;                 // user flipped back to Edit during the await
+    view.width = c.width; view.height = c.height;
+    vctx.clearRect(0, 0, c.width, c.height);
+    vctx.drawImage(c, 0, 0);
+    view.classList.add('viewing');
+    fitView();
+    syncStageToggle();
+  }
+  // called by every step-5 styling control so the change shows on the stage at once
+  function previewNow() { if (editReady()) setStageMode('preview'); }
+
   // hex overlay: photo (already drawn) + painted terrain hexes (semi-transparent)
   // + hex grid lines + stamps. Grid is bright while locking, dim once painting.
   function renderHexOverlay() {
@@ -925,14 +988,14 @@
       sel.value = cur; sel.addEventListener('change', () => onSel(sel.value));
       w.appendChild(sel); el.appendChild(w);
     };
-    mkSelect('Map style', DS.RENDER_STYLES, S.style, (v) => { S.style = v; });
-    mkSelect('Floor texture', DS.FLOOR_TEXTURES, S.floorTexture, (v) => { S.floorTexture = v; });
-    mkSelect('Wall style', DS.WALL_STYLES, S.wallStyle, (v) => { S.wallStyle = v; });
+    mkSelect('Map style', DS.RENDER_STYLES, S.style, (v) => { S.style = v; previewNow(); });
+    mkSelect('Floor texture', DS.FLOOR_TEXTURES, S.floorTexture, (v) => { S.floorTexture = v; previewNow(); });
+    mkSelect('Wall style', DS.WALL_STYLES, S.wallStyle, (v) => { S.wallStyle = v; previewNow(); });
     const p = document.createElement('div'); p.className = 'ctl';
     p.innerHTML = `<label><span>Detail (pixels per square)</span></label>`;
     const ps = document.createElement('select');
     [[70, 'Roll20 (70)'], [80, 'Standard (80)'], [100, 'Foundry (100)'], [140, 'Print (140)']].forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; ps.appendChild(o); });
-    ps.value = S.ppg; ps.addEventListener('change', () => { S.ppg = Number(ps.value); });
+    ps.value = S.ppg; ps.addEventListener('change', () => { S.ppg = Number(ps.value); previewNow(); });
     p.appendChild(ps); el.appendChild(p);
     buildExportOptions(el, true);
   }
@@ -942,20 +1005,20 @@
     const wrap = document.createElement('div'); wrap.className = 'ctl export-opts';
     const legLabel = document.createElement('label'); legLabel.className = 'check';
     legLabel.innerHTML = '<input type="checkbox"' + (S.showLegend ? ' checked' : '') + '/> Show legend (placed symbols)';
-    legLabel.querySelector('input').addEventListener('change', (e) => { S.showLegend = e.target.checked; });
+    legLabel.querySelector('input').addEventListener('change', (e) => { S.showLegend = e.target.checked; previewNow(); });
     wrap.appendChild(legLabel);
     if (withGrid) {
       const gridLabel = document.createElement('label'); gridLabel.className = 'check';
       gridLabel.innerHTML = '<input type="checkbox"' + (S.gridOnExport ? ' checked' : '') + '/> Grid on export';
-      gridLabel.querySelector('input').addEventListener('change', (e) => { S.gridOnExport = e.target.checked; });
+      gridLabel.querySelector('input').addEventListener('change', (e) => { S.gridOnExport = e.target.checked; previewNow(); });
       wrap.appendChild(gridLabel);
       // grid color override (color picker + "custom" toggle)
       const colorRow = document.createElement('div'); colorRow.className = 'grid-color-row';
       colorRow.innerHTML = '<label class="check"><input type="checkbox"' + (S.gridColor ? ' checked' : '') + '/> Custom grid color</label>'
         + '<input type="color" value="' + (S.gridColor || '#3c321e') + '"/>';
       const [cChk, cInp] = colorRow.querySelectorAll('input');
-      cChk.addEventListener('change', () => { S.gridColor = cChk.checked ? cInp.value : ''; });
-      cInp.addEventListener('input', () => { if (cChk.checked) S.gridColor = cInp.value; });
+      cChk.addEventListener('change', () => { S.gridColor = cChk.checked ? cInp.value : ''; previewNow(); });
+      cInp.addEventListener('input', () => { if (cChk.checked) { S.gridColor = cInp.value; previewNow(); } });
       wrap.appendChild(colorRow);
       // grid opacity override (range + "custom" toggle)
       const opRow = document.createElement('div'); opRow.className = 'grid-opacity-row';
@@ -967,8 +1030,8 @@
       const opChk = document.createElement('label'); opChk.className = 'check sub';
       opChk.innerHTML = '<input type="checkbox"' + (S.gridOpacity != null ? ' checked' : '') + '/> custom';
       const reflectOp = () => { opVal.textContent = S.gridOpacity != null ? Math.round(S.gridOpacity * 100) + '%' : 'style'; };
-      opChk.querySelector('input').addEventListener('change', (e) => { S.gridOpacity = e.target.checked ? Number(opInp.value) / 100 : null; reflectOp(); });
-      opInp.addEventListener('input', () => { if (opChk.querySelector('input').checked) { S.gridOpacity = Number(opInp.value) / 100; reflectOp(); } });
+      opChk.querySelector('input').addEventListener('change', (e) => { S.gridOpacity = e.target.checked ? Number(opInp.value) / 100 : null; reflectOp(); previewNow(); });
+      opInp.addEventListener('input', () => { if (opChk.querySelector('input').checked) { S.gridOpacity = Number(opInp.value) / 100; reflectOp(); previewNow(); } });
       reflectOp();
       opRow.appendChild(opLbl); opRow.appendChild(opInp); opRow.appendChild(opChk);
       wrap.appendChild(opRow);
@@ -987,12 +1050,12 @@
       w.appendChild(sel); el.appendChild(w);
     };
     const hexStyles = Object.keys(DS.hex.HEX_STYLES).map((id) => ({ id, name: id.charAt(0).toUpperCase() + id.slice(1) }));
-    mkSelect('Map style', hexStyles, S.hexStyle, (v) => { S.hexStyle = v; });
+    mkSelect('Map style', hexStyles, S.hexStyle, (v) => { S.hexStyle = v; previewNow(); });
     const p = document.createElement('div'); p.className = 'ctl';
     p.innerHTML = `<label><span>Detail (pixels per hex)</span></label>`;
     const ps = document.createElement('select');
     [[48, 'Skirmish (48)'], [64, 'Standard (64)'], [80, 'Detailed (80)'], [100, 'Print (100)']].forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; ps.appendChild(o); });
-    ps.value = S.ppg; ps.addEventListener('change', () => { S.ppg = Number(ps.value); });
+    ps.value = S.ppg; ps.addEventListener('change', () => { S.ppg = Number(ps.value); previewNow(); });
     p.appendChild(ps); el.appendChild(p);
     buildExportOptions(el, false);   // hex: legend only, no square-grid toggle
   }

@@ -175,6 +175,25 @@ img { outline: 1px solid rgba(0,0,0,.1); outline-offset: -1px; }
   border-radius: var(--r-sm); box-shadow: 0 18px 44px rgba(0,0,0,.55), 0 0 0 1px var(--espresso-700);
   touch-action: none; cursor: crosshair;
 }
+#view.viewing { cursor: default; }   /* preview mode — the map isn't editable here */
+
+/* Edit / Preview toggle — floats over the stage once a map is read, so the styled
+   "Save your map" look can be seen live instead of picked blind. */
+.stage-toggle {
+  position: absolute; top: var(--sp-4); left: 50%; transform: translateX(-50%);
+  z-index: 6; display: inline-flex; gap: 2px; padding: 3px;
+  background: rgba(20,16,11,.72); border: 1px solid var(--espresso-line);
+  border-radius: 999px; box-shadow: 0 6px 20px rgba(0,0,0,.4); backdrop-filter: blur(6px);
+}
+.stage-toggle.hidden { display: none; }
+.stg-seg {
+  border: 0; background: transparent; color: var(--cream-muted);
+  font: inherit; font-size: var(--fs-sm); font-weight: 600;
+  padding: 5px 15px; border-radius: 999px; cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.stg-seg:hover { color: var(--cream-text); }
+.stg-seg.on { background: var(--amber-500); color: #1b140a; }
 .drop {
   position: absolute; inset: var(--sp-6);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-2);
