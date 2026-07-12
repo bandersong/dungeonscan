@@ -86,26 +86,42 @@ def draw_map(floor, cell, ox, oy, D):
     def cx(c): return ox + c * cell
     def cy(r): return oy + r * cell
 
-    # vegetation hatching: short strokes in non-floor cells that touch a floor cell
+    # dilate the floor mask by up to 2 cells → the "vegetation band" that rings rooms
+    from itertools import product
+    veg = np.zeros_like(floor)
+    band = rndi(1, 3)
+    fy, fx = np.where(floor)
+    for r, c in zip(fy, fx):
+        for dr_, dc in product(range(-band, band + 1), repeat=2):
+            rr, cc = r + dr_, c + dc
+            if 0 <= rr < rows and 0 <= cc < cols and not floor[rr, cc]:
+                veg[rr, cc] = True
+    # vegetation hatching: dense short strokes filling the band around the rooms
     for r in range(rows):
         for c in range(cols):
-            if floor[r, c]:
-                continue
-            touch = any(0 <= r + dr_ < rows and 0 <= c + dc < cols and floor[r + dr_, c + dc]
-                        for dr_, dc in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)))
-            if not touch or random.random() < 0.15:
+            if not veg[r, c] or random.random() < 0.12:
                 continue
             x0, y0 = cx(c), cy(r)
-            n = rndi(6, 16)
+            n = rndi(16, 34)
             for _ in range(n):
-                sx, sy = x0 + rnd(2, cell - 2), y0 + rnd(2, cell - 2)
-                ang = rnd(-1.0, 1.0) + math.pi / 2
-                ln = rnd(3, 8)
+                sx, sy = x0 + rnd(1, cell - 1), y0 + rnd(1, cell - 1)
+                ang = rnd(-0.9, 0.9) + math.pi / 2
+                ln = rnd(3, 9)
                 dr.line([(sx, sy), (sx + math.cos(ang) * ln, sy + math.sin(ang) * ln)],
                         fill=ink(), width=1)
 
-    # walls: on every floor-cell edge adjacent to non-floor
-    ww = rnd(2.6, 4.2)
+    # light interior grid — bro draws every floor cell as a little ruled square
+    for r in range(rows):
+        for c in range(cols):
+            if not floor[r, c]:
+                continue
+            x0, y0, x1, y1 = cx(c), cy(r), cx(c + 1), cy(r + 1)
+            for a, b in (((x0, y0), (x1, y0)), ((x0, y0), (x0, y1)),
+                         ((x1, y0), (x1, y1)), ((x0, y1), (x1, y1))):
+                wobbly_line(dr, a, b, 1.3, ink(72), jit=0.8)
+
+    # walls: bold marker on every floor-cell edge adjacent to non-floor
+    ww = rnd(3.2, 5.4)
     for r in range(rows):
         for c in range(cols):
             if not floor[r, c]:
@@ -128,6 +144,38 @@ def draw_map(floor, cell, ox, oy, D):
                 for _ in range(rndi(1, 3)):
                     sx, sy = x0 + rnd(cell * .3, cell * .7), y0 + rnd(cell * .3, cell * .7)
                     dr.line([(sx, sy), (sx + rnd(-3, 3), sy + rnd(2, 5))], fill=ink(40), width=1)
+
+    # symbols: doors (gaps in walls), stairs, room numbers
+    edges = []
+    for r in range(rows):
+        for c in range(cols):
+            if not floor[r, c]:
+                continue
+            if r == 0 or not floor[r - 1, c]: edges.append(('h', cx(c), cy(r), cx(c + 1), cy(r)))
+            if r == rows - 1 or not floor[r + 1, c]: edges.append(('h', cx(c), cy(r + 1), cx(c + 1), cy(r + 1)))
+            if c == 0 or not floor[r, c - 1]: edges.append(('v', cx(c), cy(r), cx(c), cy(r + 1)))
+            if c == cols - 1 or not floor[r, c + 1]: edges.append(('v', cx(c + 1), cy(r), cx(c + 1), cy(r + 1)))
+    random.shuffle(edges)
+    for e in edges[:rndi(1, 4)]:
+        o, ax, ay, bx, by = e
+        mx, my = (ax + bx) / 2, (ay + by) / 2
+        g = cell * 0.32
+        if o == 'h':
+            dr.rectangle([mx - g, my - 3, mx + g, my + 3], fill=paper)
+            wobbly_line(dr, (mx - g, my), (mx + g, my), 1.7, ink(55), jit=0.5)
+        else:
+            dr.rectangle([mx - 3, my - g, mx + 3, my + g], fill=paper)
+            wobbly_line(dr, (mx, my - g), (mx, my + g), 1.7, ink(55), jit=0.5)
+    if fy.size:
+        for _ in range(rndi(0, 2)):  # stairs
+            i = rndi(0, fy.size - 1); r, c = fy[i], fx[i]
+            x0, y0 = cx(c), cy(r)
+            for t in range(rndi(3, 6)):
+                yy = y0 + cell * (0.2 + 0.6 * t / 5)
+                wobbly_line(dr, (x0 + cell * 0.2, yy), (x0 + cell * 0.8, yy), 2.0, ink(), jit=0.4)
+        for _ in range(rndi(2, 5)):  # room numbers
+            i = rndi(0, fy.size - 1); r, c = fy[i], fx[i]
+            dr.text((cx(c) + cell * 0.25, cy(r) + cell * 0.2), str(rndi(1, 20)), fill=ink())
 
     corners = [(ox, oy), (ox + cols * cell, oy), (ox + cols * cell, oy + rows * cell), (ox, oy + rows * cell)]
     return img, corners
