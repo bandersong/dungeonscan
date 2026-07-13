@@ -105,6 +105,10 @@ targets:
         excludes:
           - Info.plist
           - DungeonScan-iOS.entitlements
+          - Assets.xcassets
+      # App icon asset catalog (single 1024px source; Xcode derives the rest).
+      - path: DungeonScan/ios/Assets.xcassets
+        buildPhase: resources
       # The shared HTML/JS UI — identical to the macOS target, bundled resources.
       - path: DungeonScan/Web
         buildPhase: resources
@@ -134,4 +138,5 @@ targets:
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_HARDENED_RUNTIME: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: DungeonScan/ios/DungeonScan-iOS.entitlements
