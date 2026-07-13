@@ -586,3 +586,41 @@ button:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
 
 /* header project-op buttons: slightly tighter than the ghost default */
 .top-actions .ghost { font-size: var(--fs-2xs); padding: 6px var(--sp-3); }
+
+/* ============================================================
+   Touch / portrait (iPad & phones): stack the map OVER the controls,
+   full-width scrolling panel, safe-area insets. Driven by the
+   width=device-width, viewport-fit=cover meta. Desktop (>950px) is unchanged.
+   ============================================================ */
+.top { padding-top: max(var(--sp-3), env(safe-area-inset-top)); }
+
+@media (max-width: 950px) {
+  .layout { flex-direction: column; }
+  /* the map takes the top ~half; it's the thing you look at + touch */
+  .stage { flex: none; height: 52vh; min-height: 300px; margin: var(--sp-2); }
+  .stage-inner { margin: var(--sp-2); padding: var(--sp-3); }
+  /* controls fill the rest and scroll, clearing the home indicator */
+  .panel {
+    width: 100%; flex: 1 1 auto; min-height: 0;
+    border-left: none; border-top: 1px solid var(--stone-300);
+    padding-bottom: max(var(--sp-5), env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling: touch;
+  }
+  .top {
+    padding-left: max(var(--sp-4), env(safe-area-inset-left));
+    padding-right: max(var(--sp-4), env(safe-area-inset-right));
+  }
+  .top-actions { gap: var(--sp-2); }
+  .brand-text .tag { display: none; }          /* reclaim header width */
+  /* fatter touch targets */
+  .step-btn { width: 40px; height: 40px; }
+  .dpad { grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(3, 40px); }
+  .zoom-pill button { min-width: 38px; height: 34px; }
+  .primary.wide, .btn-secondary.wide, .save.wide { padding-top: 13px; padding-bottom: 13px; }
+}
+
+@media (max-width: 620px) {
+  .stage { height: 44vh; }
+  .top-actions .action-group { padding-right: var(--sp-2); border-right: none; }
+  .brand-name { font-size: var(--fs-xl); }
+}
