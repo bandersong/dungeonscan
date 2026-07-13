@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: io.github.bandersong.dungeonscan
   deploymentTarget:
     macOS: "14.0"
+    iOS: "16.0"
   createIntermediateGroups: true
   groupSortPosition: top
 
@@ -40,6 +41,11 @@ targets:
       - path: DungeonScan
         excludes:
           - Web
+          # The iOS shell lives in DungeonScan/ios/ (UIKit; compiled by the
+          # DungeonScan-iOS target below). Exclude it from this macOS target so
+          # the UIKit sources — and the duplicate AppDelegate.swift symbol —
+          # never leak into the macOS build.
+          - ios
           # Bundled below as explicit resources (folder ref / plain file).
           - DungeonCellClassifier.mlmodelc
           - TerrainClassifier.mlmodelc
@@ -79,3 +85,53 @@ targets:
         # codesign step; ignored when CODE_SIGNING_ALLOWED=NO in local builds.
         CODE_SIGN_ENTITLEMENTS: DungeonScan.entitlements.mas
         ENABLE_HARDENED_RUNTIME: YES
+
+  # ---------------------------------------------------------------------------
+  # iOS (iPadOS) shell for DungeonScan. The ENTIRE app — CV, UI, export — is the
+  # shared JS in DungeonScan/Web, loaded unchanged into a full-screen WKWebView.
+  # Only the native shell differs from macOS: UIKit pickers/sheets in ios/
+  # (IOSBridge) instead of AppKit panels. Vision + CoreML + PDFKit are cross-
+  # platform, so the classify/ocr/rasterizePdf/capabilities logic is copied
+  # verbatim from NativeBridge.swift. NO Sparkle (macOS-only).
+  # ---------------------------------------------------------------------------
+  DungeonScan-iOS:
+    type: application
+    platform: iOS
+    sources:
+      # iOS-only Swift shell (AppDelegate, SceneDelegate, WebViewController,
+      # IOSBridge). Info.plist + entitlements are referenced below via build
+      # settings, NOT bundled as resources, so exclude them from the source path.
+      - path: DungeonScan/ios
+        excludes:
+          - Info.plist
+          - DungeonScan-iOS.entitlements
+      # The shared HTML/JS UI — identical to the macOS target, bundled resources.
+      - path: DungeonScan/Web
+        buildPhase: resources
+      # CoreML cell classifier — folder ref so the internal model0/model1/...
+      # structure is preserved (same as macOS). Lands at
+      # DungeonScan-iOS.app/DungeonCellClassifier.mlmodelc.
+      - path: DungeonScan/DungeonCellClassifier.mlmodelc
+        buildPhase: resources
+        type: folder
+      # CoreML HEX terrain classifier — same folder-ref treatment as the cell
+      # model. Picked by name in IOSBridge.classify (model:"TerrainClassifier").
+      - path: DungeonScan/TerrainClassifier.mlmodelc
+        buildPhase: resources
+        type: folder
+      # Class-label vocabularies shipped next to their models.
+      - path: DungeonScan/labels.json
+        buildPhase: resources
+      - path: DungeonScan/terrain_labels.json
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.bandersong.dungeonscan.ios
+        INFOPLIST_FILE: DungeonScan/ios/Info.plist
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "2"
+        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_HARDENED_RUNTIME: NO
+        CODE_SIGN_ENTITLEMENTS: DungeonScan/ios/DungeonScan-iOS.entitlements

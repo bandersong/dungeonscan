@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    iOS entitlements for DungeonScan. Camera + Photos + CoreML + Vision need no
+    special entitlement keys (camera/photos are gated by Info.plist usage strings
+    + runtime permission prompts, not entitlements), so this file is intentionally
+    empty. App Sandbox / Hardened Runtime are macOS-only concepts and do not apply
+    to the iOS target.
+  -->
+</dict>
+</plist>
