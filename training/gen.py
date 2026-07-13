@@ -249,7 +249,9 @@ def augment(img, corners):
     return out, corners
 
 # ----------------------------- main -----------------------------
-def one():
+# A clean (un-augmented, axis-aligned) map + its ground truth. Reused by the
+# full-image generator (below) AND the cell-crop generator (gen_cells.py).
+def clean_sample():
     D = rndi(12, 20)                 # dot pitch
     k = rndi(2, 4)                    # dots per cell
     cell = D * k
@@ -261,6 +263,11 @@ def one():
     pad_b = rndi(0, 6) * cell + rndi(D, 2 * D)
     floor = gen_layout(cols, rows)
     img, corners = draw_map(floor, cell, ox, oy, D, pad_r, pad_b)
+    return {"img": img, "floor": floor, "cell": cell, "ox": ox, "oy": oy, "D": D, "corners": corners}
+
+def one():
+    s = clean_sample()
+    img, corners = s["img"], s["corners"]
     out, corners = augment(img, corners)
     # normalize longest side to 1600 like the app
     W, H = out.size
