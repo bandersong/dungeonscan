@@ -134,7 +134,7 @@
     const sm = new Float64Array(90);
     for (let i = 0; i < 90; i++) { let s = 0; for (let d = -2; d <= 2; d++) s += ah[((i + d) % 90 + 90) % 90]; sm[i] = s; }
     let pk = 0; for (let i = 1; i < 90; i++) if (sm[i] > sm[pk]) pk = i;
-    return { angle: pk < 45 ? pk : pk - 90, dots: dots.length };
+    return { angle: pk < 45 ? pk : pk - 90, dots: dots.length, spacing: spac };
   }
 
   // Rotate a canvas by `deg` about its centre (white background), returning a new
@@ -151,26 +151,51 @@
   }
 
   // Straighten by choosing, among candidate rotations, the one the GRID detector is
-  // most confident about. Candidates: no-op, the projection deskew, and ± the
+  // most confident about. Fast candidates: no-op, the projection deskew, and ± the
   // dot-lattice angle. The grid detector is the judge, so a wrong dot/projection
   // guess is out-voted and a straight scan is never rotated away from true (0° is
-  // always in the running). Fixes hand-drawn maps drawn at an angle on the page,
-  // which projection-deskew alone gets wrong. Returns { canvas, angle, confidence }.
+  // always in the running). If none of those is confident, fall back to a coarse
+  // rotation sweep scored on a downscaled copy (Fix 2) — that recovers maps drawn at
+  // a steep angle on the page which the projection/dot guesses undershoot. Returns
+  // { canvas, angle, confidence }.
   function smartDeskew(src) {
     const w = src.width, h = src.height;
     const gray0 = window.DS.toGray(src.getContext('2d').getImageData(0, 0, w, h));
     const dl = detectDotAngle(gray0, w, h);
     const ad = autoDeskew(src).angle;
+
+    const score = (canvas) => {
+      const g = window.DS.toGray(canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height));
+      return window.DS.estimateGrid(g, canvas.width, canvas.height).confidence;
+    };
+
+    // fast candidates: no-op, projection deskew, ± dot-lattice angle
     const cands = [0];
     const add = (v) => { const r = Math.round(v * 10) / 10; if (Math.abs(r) <= 30 && !cands.some(c => Math.abs(c - r) < 0.5)) cands.push(r); };
     if (Math.abs(ad) > 0.2) add(ad);
     if (dl.angle && Math.abs(dl.angle) <= 25) { add(dl.angle); add(-dl.angle); }
-    let best = { deg: 0, conf: -1, canvas: src };
+    let best = { deg: 0, conf: score(src), canvas: src };
     for (const deg of cands) {
+      if (deg === 0) continue;
       const rc = rotateCanvas(src, deg);
-      const g = window.DS.toGray(rc.getContext('2d').getImageData(0, 0, rc.width, rc.height));
-      const e = window.DS.estimateGrid(g, rc.width, rc.height);
-      if (e.confidence > best.conf) best = { deg, conf: e.confidence, canvas: rc };
+      const conf = score(rc);
+      if (conf > best.conf) best = { deg, conf, canvas: rc };
+    }
+
+    // FIX 2 — when the fast path is weak, sweep on a downscaled copy for robustness.
+    // 0° is in the running (it seeds the sweep), so a straight map is never rotated
+    // away from true; an angled map's confidence peaks at its true deskew.
+    if (best.conf < 0.6) {
+      const small = downscaleGray(src, 1000);
+      const sg = (a) => window.DS.estimateGrid(rotatedGray(small, a), small.width, small.height).confidence;
+      let sweepDeg = 0, sweepConf = sg(0);           // 0° always in the running
+      for (let a = -30; a <= 30; a += 2) { const c = sg(a); if (c > sweepConf) { sweepConf = c; sweepDeg = a; } }
+      for (let a = sweepDeg - 2; a <= sweepDeg + 2; a += 0.5) { const c = sg(a); if (c > sweepConf) { sweepConf = c; sweepDeg = a; } }
+      if (Math.abs(sweepDeg) >= 0.15) {              // apply the winner to full-res once
+        const rc = rotateCanvas(src, sweepDeg);
+        const conf = score(rc);
+        if (conf > best.conf) best = { deg: sweepDeg, conf, canvas: rc };
+      }
     }
     return { canvas: best.canvas, angle: best.deg, confidence: best.conf };
   }
