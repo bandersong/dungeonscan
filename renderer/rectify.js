@@ -239,7 +239,15 @@
   function smartDeskew(src) {
     const w = src.width, h = src.height;
     const gray0 = window.DS.toGray(src.getContext('2d').getImageData(0, 0, w, h));
-    const angle = projectionVarianceAngle(gray0, w, h).angle;
+    let angle = projectionVarianceAngle(gray0, w, h).angle;
+    // Deadzone: a near-upright map must NOT be rotated. Every one of bro's real maps
+    // sits within ~2° of straight, and the grid detector's half-pitch decision is
+    // sensitive to sub-degree rotation — a 0.5° deskew smears the ruled lines just
+    // enough to flip bro-04 from a correct 39px cell back to a 2×-coarse 78px (read
+    // confidently wrong). Measuring the pitch on the original orientation is strictly
+    // better here. Only straighten a map that is genuinely, substantially tilted
+    // (phone photo of the page at a real angle); those still clear this threshold.
+    if (Math.abs(angle) < 4) angle = 0;
     let canvas = src;
     if (Math.abs(angle) >= 0.15) canvas = rotateCanvas(src, angle);
     const g = window.DS.toGray(canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height));
