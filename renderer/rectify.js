@@ -25,6 +25,86 @@
   }
   function variance(a) { let m = 0; for (let i = 0; i < a.length; i++) m += a[i]; m /= a.length; let v = 0; for (let i = 0; i < a.length; i++) { const d = a[i] - m; v += d * d; } return v / a.length; }
 
+  // ---- BUG B: projection-variance deskew (pitch-independent, robust) ----
+  // The true page rotation maximizes the peakiness of the row + column ink projections:
+  // when the ruled grid is axis-aligned, lines pile ink onto specific rows/columns and the
+  // projections go spiky. We score V(a) = var(highpass(row proj)) + var(highpass(col proj))
+  // over an angle sweep on a downscaled grayscale copy. Isotropic dots / hatch do NOT make
+  // a spurious variance peak, so a straight map stays at 0°. Pure JS (no canvas) so it runs
+  // identically in node and the browser; smartDeskew applies the chosen angle to the
+  // full-res canvas once. This REPLACES the old estimateGrid-confidence / dot-angle sweep,
+  // which was gameable (diagonal aliasing faked high confidence).
+
+  // box-downscale a grayscale array so its long side is ~maxDim
+  function downscaleArray(gray, W, H, maxDim) {
+    const sc = Math.min(1, maxDim / Math.max(W, H));
+    const w = Math.max(8, Math.round(W * sc)), h = Math.max(8, Math.round(H * sc));
+    const out = new Uint8Array(w * h), sx0 = W / w, sy0 = H / h;
+    for (let y = 0; y < h; y++) {
+      const syi = Math.floor(y * sy0), syj = Math.min(H, Math.floor((y + 1) * sy0));
+      for (let x = 0; x < w; x++) {
+        const sxi = Math.floor(x * sx0), sxj = Math.min(W, Math.floor((x + 1) * sx0));
+        let sum = 0, cnt = 0;
+        for (let yy = syi; yy < syj; yy++) for (let xx = sxi; xx < sxj; xx++) { sum += gray[yy * W + xx]; cnt++; }
+        out[y * w + x] = cnt ? (sum / cnt) | 0 : 255;
+      }
+    }
+    return { data: out, w, h };
+  }
+
+  // nearest-neighbour rotate of a grayscale array about its centre, white (255) fill
+  function rotateArrayNN(g, w, h, deg) {
+    const rad = deg * Math.PI / 180, c = Math.cos(rad), s = Math.sin(rad);
+    const cx = w / 2, cy = h / 2;
+    const out = new Uint8Array(w * h).fill(255);
+    for (let y = 0; y < h; y++) {
+      const dy = y - cy, brow = y * w;
+      for (let x = 0; x < w; x++) {
+        const dx = x - cx;
+        // inverse rotation: source pixel = R(-deg) of the displacement from centre
+        const sx = (cx + c * dx + s * dy) | 0;
+        const sy = (cy - s * dx + c * dy) | 0;
+        if (sx >= 0 && sx < w && sy >= 0 && sy < h) out[brow + x] = g[sy * w + sx];
+      }
+    }
+    return out;
+  }
+
+  // variance of a signal after subtracting a ~win-sample moving average (kills the slow
+  // lighting gradient so only line-driven peakiness remains). Mutates sig in place.
+  function hpVariance(sig, win) {
+    const n = sig.length, ma = new Float64Array(n);
+    for (let i = 0; i < n; i++) { let sum = 0, cnt = 0; for (let d = -win; d <= win; d++) { const j = i + d; if (j >= 0 && j < n) { sum += sig[j]; cnt++; } } ma[i] = sum / cnt; }
+    let m = 0; for (let i = 0; i < n; i++) { sig[i] -= ma[i]; m += sig[i]; } m /= n;
+    let v = 0; for (let i = 0; i < n; i++) { const d = sig[i] - m; v += d * d; } return v / n;
+  }
+
+  // V(a) = var(highpass(row ink projection)) + var(highpass(col ink projection))
+  function projVariance(g, w, h) {
+    const row = new Float64Array(h), col = new Float64Array(w);
+    for (let y = 0; y < h; y++) { const b = y * w; for (let x = 0; x < w; x++) { const ink = 255 - g[b + x]; row[y] += ink; col[x] += ink; } }
+    return hpVariance(row, 25) + hpVariance(col, 25);
+  }
+
+  // Choose a deskew angle by projection variance. Returns { angle, V0, Vstar, ratio }.
+  // angle = a* (argmax V), accepted only if V(a*) >= 1.08 * V(0) (an 8% real gain);
+  // otherwise 0°. Among angles within 1% of the peak, the smallest |a| wins, so a straight
+  // map never gets rotated away from true and a genuinely angled map still locks on.
+  function projectionVarianceAngle(gray, W, H, opts) {
+    opts = opts || {};
+    const { data, w, h } = downscaleArray(gray, W, H, opts.maxDim || 1000);
+    const range = 25, step = 0.5, pts = [];
+    for (let a = -range; a <= range + 1e-9; a += step) {
+      const g = (Math.abs(a) < 0.01) ? data : rotateArrayNN(data, w, h, a);
+      pts.push({ a, V: projVariance(g, w, h) });
+    }
+    const V0 = pts.find(p => p.a === 0).V;
+    let peak = pts[0]; for (const p of pts) if (p.V > peak.V) peak = p;
+    if (peak.V < 1.08 * V0) return { angle: 0, V0, Vstar: V0, ratio: 1 };
+    const near = pts.filter(p => p.V >= 0.99 * peak.V).sort((p, q) => Math.abs(p.a) - Math.abs(q.a));
+    return { angle: near[0].a, V0, Vstar: peak.V, ratio: peak.V / V0 };
+  }
+
   function rotatedGray(small, angleDeg) {
     const w = small.width, h = small.height;
     const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -150,56 +230,23 @@
     return c;
   }
 
-  // Straighten by choosing, among candidate rotations, the one the GRID detector is
-  // most confident about. Fast candidates: no-op, the projection deskew, and ± the
-  // dot-lattice angle. The grid detector is the judge, so a wrong dot/projection
-  // guess is out-voted and a straight scan is never rotated away from true (0° is
-  // always in the running). If none of those is confident, fall back to a coarse
-  // rotation sweep scored on a downscaled copy (Fix 2) — that recovers maps drawn at
-  // a steep angle on the page which the projection/dot guesses undershoot. Returns
-  // { canvas, angle, confidence }.
+  // Straighten by projection variance (BUG B). The angle is chosen purely by how peaky
+  // the ink projections get — NOT by grid-confidence (gameable) and NOT by the dot lattice
+  // (a misdector here). 0° is always available: the angle is accepted only if projection
+  // variance beats the upright image by >= 8%, so a straight scan is never rotated away
+  // from true. The chosen angle is applied to the full-res canvas once. detectDotAngle is
+  // left defined but unused. Returns { canvas, angle, confidence }.
   function smartDeskew(src) {
     const w = src.width, h = src.height;
     const gray0 = window.DS.toGray(src.getContext('2d').getImageData(0, 0, w, h));
-    const dl = detectDotAngle(gray0, w, h);
-    const ad = autoDeskew(src).angle;
-
-    const score = (canvas) => {
-      const g = window.DS.toGray(canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height));
-      return window.DS.estimateGrid(g, canvas.width, canvas.height).confidence;
-    };
-
-    // fast candidates: no-op, projection deskew, ± dot-lattice angle
-    const cands = [0];
-    const add = (v) => { const r = Math.round(v * 10) / 10; if (Math.abs(r) <= 30 && !cands.some(c => Math.abs(c - r) < 0.5)) cands.push(r); };
-    if (Math.abs(ad) > 0.2) add(ad);
-    if (dl.angle && Math.abs(dl.angle) <= 25) { add(dl.angle); add(-dl.angle); }
-    let best = { deg: 0, conf: score(src), canvas: src };
-    for (const deg of cands) {
-      if (deg === 0) continue;
-      const rc = rotateCanvas(src, deg);
-      const conf = score(rc);
-      if (conf > best.conf) best = { deg, conf, canvas: rc };
-    }
-
-    // FIX 2 — when the fast path is weak, sweep on a downscaled copy for robustness.
-    // 0° is in the running (it seeds the sweep), so a straight map is never rotated
-    // away from true; an angled map's confidence peaks at its true deskew.
-    if (best.conf < 0.6) {
-      const small = downscaleGray(src, 1000);
-      const sg = (a) => window.DS.estimateGrid(rotatedGray(small, a), small.width, small.height).confidence;
-      let sweepDeg = 0, sweepConf = sg(0);           // 0° always in the running
-      for (let a = -30; a <= 30; a += 2) { const c = sg(a); if (c > sweepConf) { sweepConf = c; sweepDeg = a; } }
-      for (let a = sweepDeg - 2; a <= sweepDeg + 2; a += 0.5) { const c = sg(a); if (c > sweepConf) { sweepConf = c; sweepDeg = a; } }
-      if (Math.abs(sweepDeg) >= 0.15) {              // apply the winner to full-res once
-        const rc = rotateCanvas(src, sweepDeg);
-        const conf = score(rc);
-        if (conf > best.conf) best = { deg: sweepDeg, conf, canvas: rc };
-      }
-    }
-    return { canvas: best.canvas, angle: best.deg, confidence: best.conf };
+    const angle = projectionVarianceAngle(gray0, w, h).angle;
+    let canvas = src;
+    if (Math.abs(angle) >= 0.15) canvas = rotateCanvas(src, angle);
+    const g = window.DS.toGray(canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height));
+    const confidence = window.DS.estimateGrid(g, canvas.width, canvas.height).confidence;
+    return { canvas, angle, confidence };
   }
 
   window.DS = window.DS || {};
-  Object.assign(window.DS, { autoDeskew, detectDotAngle, rotateCanvas, smartDeskew });
+  Object.assign(window.DS, { autoDeskew, detectDotAngle, rotateCanvas, smartDeskew, projectionVarianceAngle });
 })();

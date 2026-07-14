@@ -114,6 +114,18 @@
     return { onScore: median(on) || 0, midScore: median(mid) || 0, midClear, Pmax };
   }
 
+  // BUG-A: median line-STRENGTH of the run-length profile (raw cL/rL — long dark runs
+  // only) at the s/2-comb midpoint lines relative to the s-comb lattice lines, sampled
+  // exactly at the comb positions. Dots/blank midpoints score ~0; a second interleaved
+  // wall set scores ~1. This is the spec's "real wall strength, not dot strength" gate.
+  function midpointStrength(rawC, s, ox) {
+    const n = rawC.length;
+    const on = [], mid = [];
+    for (let k = 0; ox + k * s < n; k++) on.push(rawC[Math.round(ox + k * s)] || 0);
+    for (let k = 0; ox + (k + 0.5) * s < n; k++) mid.push(rawC[Math.round(ox + (k + 0.5) * s)] || 0);
+    return (median(mid) || 0) / (median(on) || 1);
+  }
+
   // {gap, reg, peaks}: robust median line spacing + how many gaps match it (±20%)
   function gapStats(peaks) {
     if (peaks.length < 3) return null;
@@ -149,7 +161,10 @@
     // near-zero prominence everywhere, so we gate on prominence first — its tiny wall
     // modulation can't trigger a halve even though s/2 "lines" sit at the same height.
     // Dots never enter this: they're suppressed in P (runs < L).
-    function analyzeAxis(P, gstat, defPitch) {
+    // Per-axis candidate pitch + half-pitch signals. Does NOT finalize the halve — that
+    // needs both axes (see the cross-axis density check below). midRatio is the spec's
+    // midpoint WALL-strength gate on the run-length profile.
+    function analyzeAxis(rawC, P, gstat, defPitch) {
       const n = P.length;
       let Pmax = 0; for (let i = 0; i < n; i++) if (P[i] > Pmax) Pmax = P[i];
       const base = percentile(P, 0.15);
@@ -157,26 +172,40 @@
       const ox = originAt(P, s, FR);
       const sc = pitchScores(P, s, ox, FR);
       const prom = (sc.onScore - base) / (Pmax || 1);
-      let halved = false, halfRatio = 0;
       const half = Math.round(s / 2);
+      let halfRatio = 0;
       if (half >= 12 && prom >= 0.25 && sc.onScore > base) {
         const sc2 = pitchScores(P, half, originAt(P, half, FR), FR);
         // s/2 places ~2× as many lattice lines, so compare TOTAL captured prominence.
         halfRatio = (2 * (sc2.onScore - base)) / (sc.onScore - base);
-        if (halfRatio >= 1.2) { s = half; halved = true; }
       }
-      return { s, halved, reg: ratio(gstat), Pmax, base, prom, halfRatio, sc };
+      return { s, half, halfRatio, prom, midRatio: midpointStrength(rawC, s, ox),
+               reg: ratio(gstat), Pmax, base, sc };
     }
 
     const gc = gapStats(findPeaks(cS, MD, FR));
     const gr = gapStats(findPeaks(rS, MD, FR));
     const def = Math.round(Math.min(W, H) / 12);
-    const ax = analyzeAxis(cS, gc, def);   // columns → x origin
-    const ay = analyzeAxis(rS, gr, def);   // rows    → y origin
+    const ax = analyzeAxis(cL, cS, gc, def);   // columns → x origin
+    const ay = analyzeAxis(rL, rS, gr, def);   // rows    → y origin
+
+    // BUG-A half-pitch decision. A halve is genuine only when (1) the s/2-comb midpoint
+    // lines carry real WALL strength — >= STR× the lattice lines on the run-length profile
+    // (dots / blank midpoints fail this) — AND (2) the 2x structure is ASYMMETRIC across
+    // the two axes. A map whose BOTH axes show equally strong s/2 midpoint structure is
+    // densely drawn: those midpoints are interior texture / a paper sub-grid, not a finer
+    // cell lattice, so we keep the coarser pitch. This is what stops bro-02 (dense on both
+    // axes) over-halving to ~28 while still halving bro-04 / bro-05 (a real 2x lock on a
+    // single axis). SYM only applies when both axes actually detected a lattice.
+    const STR = 0.5, SYM = 0.8;
+    const bothStrong = gc && gr && ax.midRatio >= SYM && ay.midRatio >= SYM;
+    const halve = (x) => !bothStrong && x.half >= 12 && x.prom >= 0.25 && x.sc.onScore > x.base
+                        && x.halfRatio >= 1.2 && x.midRatio >= STR;
+    ax.halved = halve(ax); ay.halved = halve(ay);
 
     // combine to one pitch (his cells are square): agree → mean; disagree with a halve
     // → take the finer; otherwise trust the more regular axis.
-    const a = ax.s, b = ay.s;
+    const a = ax.halved ? ax.half : ax.s, b = ay.halved ? ay.half : ay.s;
     const big = Math.max(a, b), small = Math.min(a, b);
     let s;
     if (big <= 1.15 * small) s = Math.round((a + b) / 2);
@@ -220,8 +249,8 @@
       s, ox, oy, C, R, confidence, confident: confidence >= 0.5,
       dbg: { sX: ax.s, sY: ay.s, halved: [ax.halved, ay.halved],
              onScore: [scX.onScore, scY.onScore], midScore: [scX.midScore, scY.midScore],
-             prom: [ax.prom, ay.prom], halfRatio: [ax.halfRatio, ay.halfRatio], midFrac,
-             reg: [rc, rr] }
+             prom: [ax.prom, ay.prom], halfRatio: [ax.halfRatio, ay.halfRatio],
+             midRatio: [ax.midRatio, ay.midRatio], midFrac, reg: [rc, rr] }
     };
   }
 
