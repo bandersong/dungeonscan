@@ -140,3 +140,26 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: DungeonScan/ios/DungeonScan-iOS.entitlements
+
+  # ---------------------------------------------------------------------------
+  # Standalone Vision OCR CLI. Same VNRecognizeTextRequest path as NativeBridge
+  # in the GUI app, but invocable from the shell for batch/scripted use (folder
+  # scans, reproducible gates, piping room-number labels into other tools).
+  # The source is a single script-style Swift file (top-level code, no @main),
+  # so it ALSO runs directly via `swift tools/ocr.swift <img>` without Xcode.
+  # Output JSON mirrors NativeBridge.ocr exactly.
+  # ---------------------------------------------------------------------------
+  DungeonScan-OCR:
+    type: tool
+    platform: macOS
+    sources:
+      # Named main.swift so the same file is a valid entry point BOTH for
+      # `swift tools/main.swift <img>` (script mode, no Xcode) AND for this
+      # Xcode `tool` target (which forbids top-level code except in main.swift).
+      - path: ../tools/main.swift
+    settings:
+      base:
+        PRODUCT_NAME: dsocr
+        # macOS 14 keeps it aligned with the app target; Vision is available
+        # far earlier so this could be lowered if a CI box needs it.
+        MACOSX_DEPLOYMENT_TARGET: "14.0"

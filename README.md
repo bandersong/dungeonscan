@@ -146,13 +146,51 @@ hand-drawn dungeon symbols, then shipped as CoreML.
   resource** so `NativeBridge` finds it at `Bundle.main` — without it, the
   `classify` command returns `unknown` (the rest of the app still works).
 
+## OCR CLI
+
+`tools/main.swift` is a standalone command-line front-end for the same
+`VNRecognizeTextRequest` path the app runs interactively — for batch/scripted
+use (folder scans, reproducible gates, piping room-number labels out).
+
+```sh
+swift tools/main.swift datasets/real-maps/bro-03.jpg        # JSON to stdout
+swift tools/main.swift datasets/real-maps/bro-03.jpg --quiet  # JSON only
+```
+
+Output is a JSON array mirroring the in-app `NativeBridge.ocr` shape:
+
+```json
+[{ "text": "3", "confidence": 0.92,
+   "box": { "x": 0.21, "y": 0.33, "w": 0.04, "h": 0.05 } }, ...]
+```
+
+Box coords are normalized 0..1, **top-left origin** (Vision's native bottom-left
+origin is flipped to match the bridge contract). Sorted in reading order.
+
+Or build it as a real binary via the **`DungeonScan-OCR`** Xcode target
+(`PRODUCT_NAME=dsocr`):
+
+```sh
+cd apple && xcodegen generate
+xcodebuild -project DungeonScan.xcodeproj -scheme DungeonScan-OCR \
+  -configuration Release build CODE_SIGNING_ALLOWED=NO
+apple/build/Build/Products/Release/dsocr <image>
+```
+
+The source is a single file named `main.swift` so it works both ways: as a
+`swift tools/main.swift` script and as the Xcode `tool` target's entry point.
+
 ## Status
 
-Scaffold + native shell, CV core, VTT export, and the synthetic-data/training
-pipeline are in place; the Dev-ID and MAS build/sign/notarize pipelines are
-written (this directory). Open work: wire the trained model into the bundle,
-harden the correction UI, and run the first real signed + notarized Dev-ID build
-and the first MAS upload. See [`BUILD_PLAN.md`](BUILD_PLAN.md).
+The native shell (macOS + iOS), CV core, VTT export, correction UI,
+synthetic-data/training pipeline, **and both trained CoreML models bundled
+into the app** are all in place. The Dev-ID and MAS build/sign/notarize
+scripts are written. Open work is down to two manual gates that need the Mac's
+GUI keychain (signing identities don't unlock over ssh): **run the first real
+signed+notarized Dev-ID build** (`apple/build_devid.sh` in Terminal.app), and
+the **MAS upload** (`apple/build_mas.sh` + the portal steps in
+[`MAS_CHECKLIST.md`](MAS_CHECKLIST.md)). See [`BUILD_PLAN.md`](BUILD_PLAN.md)
+for the full, current checklist.
 
 ## License
 
