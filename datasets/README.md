@@ -37,6 +37,16 @@ between 20px and 98px.
    imbalance-robust ink threshold (post-rectify histograms break Otsu).
    Regression gates: `node tools/realgate.js` (headless, frozen expectations
    28/48/41/45/40) and `renderer/harness-real.html` (browser twin) — both 5/5.
+2b. **Open: pale-stroke recall on sparse thin-pen maps (bro-01).** Wall read at
+   2026-07-16 close: 29 enclosed cells vs ~250 drawn — his palest strokes sit
+   ~10-15 gray levels under paper, the SAME local darkness as photo/paper
+   texture. Threshold + continuity tuning was tried and REVERTED (delta 10 +
+   followed-run rescue lanes recovered pale strokes but dropped synthetic wall
+   F1 99.1→93.7 — texture chains just like a pale line). The separator has to
+   be GEOMETRY, not darkness: a pen stroke is a curvilinear ridge with a
+   consistent direction; texture is isotropic. Next attempt = ridge/stroke
+   tracing (skeletonize locally-dark ink → polylines → snap to lattice edges),
+   gated by `tools/realgate.js` + labeled bro-01 wall truth.
 3. **Build a labeled set** from these maps using the (improved) app: digitize →
    hand-correct → save `.dungeonscan`. That yields real (image, grid, walls,
    floor, doors) truth = thousands of labeled cells/edges from 5 maps.
