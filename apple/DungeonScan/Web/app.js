@@ -88,6 +88,12 @@
     const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
     let work = document.createElement('canvas'); work.width = w; work.height = h;
     work.getContext('2d').drawImage(img, 0, 0, w, h);
+    // De-warp FIRST (datasets/README.md step 1): an angled phone photo makes the
+    // cell pitch vary across the page, which no global grid estimate survives.
+    // autoRectify is gated — a straight scan or full-frame page passes through
+    // untouched, and the manual 4-corner tool (step 2) still works on top.
+    const rect = DS.perspective.autoRectify(work);
+    work = rect.canvas; S.autoRect = rect.applied;
     // Straighten before anything else. smartDeskew tries the projection deskew AND
     // ± the dot-lattice angle, keeping whichever the grid detector reads best — so a
     // map drawn at an angle on the page (which projection-deskew alone mis-rotates)

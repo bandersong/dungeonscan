@@ -126,6 +126,149 @@
     return (median(mid) || 0) / (median(on) || 1);
   }
 
+  // "Anything that isn't paper" threshold, robust to CLASS IMBALANCE. Otsu
+  // collapses when one class dominates: a rectified page (dark desk cropped away)
+  // is ~95% paper, so Otsu splits within the paper mode; and bro's pen strokes can
+  // be LIGHT (gray 100–170), so an ink/paper midpoint erases them. The line
+  // profiles want every mark — stroke, dot, black bar — separated from bare paper,
+  // so the threshold sits just below the paper level: paper(p60) minus a step
+  // scaled by the paper→ink spread.
+  function inkThreshold(gray) {
+    const lv = grayLevels(gray);
+    if (!lv) return (window.DS && DS.otsu) ? DS.otsu(gray) : 128;
+    return Math.round(lv.paper - Math.max(10, 0.12 * (lv.paper - lv.ink)));
+  }
+  // {paper, ink} luminance levels: paper = bright majority (p60); ink = median of
+  // the clearly-darker tail. null when there's no dark tail at all.
+  function grayLevels(gray) {
+    const n = gray.length;
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < n; i++) hist[gray[i]]++;
+    let acc = 0, paper = 200;
+    for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= 0.60 * n) { paper = v; break; } }
+    const cut = Math.round(0.7 * paper);
+    let dark = 0; for (let v = 0; v < cut; v++) dark += hist[v];
+    if (dark < 0.005 * n) return null;
+    let ink = cut >> 1, acc2 = 0;
+    for (let v = 0; v < cut; v++) { acc2 += hist[v]; if (acc2 >= dark / 2) { ink = v; break; } }
+    return { paper, ink };
+  }
+
+  // ---- dot-lattice pitch prior ----
+  // bro draws on dot-grid Moleskine: the printed dots sit exactly at the drawn-cell
+  // corners, so their spacing IS the cell pitch — measurable independently of ink
+  // density, hatching, or how many cells he actually ruled. Finds small isolated
+  // dark blobs (printed dots: ≤8px across, tiny area), then per-axis takes the
+  // median nearest-neighbour spacing among near-colinear dot pairs. The printed
+  // dots are LIGHTER than marker ink, so the ink threshold can miss them — we sweep
+  // a few thresholds between ink and paper and keep the most regular lattice.
+  // Returns {d, n, mad} or null when the page has no usable dot lattice (plain or
+  // graph paper, synthetic maps) — callers must treat null as "no prior".
+  function dotPitch(gray, W, H) {
+    const lv = grayLevels(gray);
+    if (!lv) return null;
+    // printed dots are GRAY — darker than paper, clearly lighter than marker ink.
+    // A band threshold excludes hatch/debris specks (those are ink-black) by physics
+    // rather than by shape alone.
+    const lo = Math.round(lv.ink + 0.30 * (lv.paper - lv.ink));
+    const hi = Math.round(lv.paper - 0.12 * (lv.paper - lv.ink));
+    if (hi - lo < 8) return null;
+    return dotLatticeAt(gray, W, H, lo, hi);
+  }
+  function dotLatticeAt(gray, W, H, lo, hi) {
+    const MAXA = 48, MAXD = 8; // a printed dot at ≤1600px working scale
+    const seen = new Uint8Array(W * H);
+    const inBand = (v) => v >= lo && v < hi;
+    const cx = [], cy = [];
+    const stack = new Int32Array(4096);
+    for (let y = 1; y < H - 1; y++) {
+      const base = y * W;
+      for (let x = 1; x < W - 1; x++) {
+        const i0 = base + x;
+        if (seen[i0] || !inBand(gray[i0])) continue;
+        // flood the component; give up on size overflow but keep consuming it
+        let top = 0, n2 = 0, sx = 0, sy = 0, minx = x, maxx = x, miny = y, maxy = y, over = false, touchesInk = false;
+        stack[top++] = i0; seen[i0] = 1;
+        while (top) {
+          const j = stack[--top];
+          const jy = (j / W) | 0, jx = j - jy * W;
+          n2++; sx += jx; sy += jy;
+          if (jx < minx) minx = jx; if (jx > maxx) maxx = jx;
+          if (jy < miny) miny = jy; if (jy > maxy) maxy = jy;
+          if (n2 > MAXA || maxx - minx > MAXD || maxy - miny > MAXD) over = true;
+          const nb = [j - 1, j + 1, j - W, j + W];
+          for (const k of nb) {
+            if (k < 0 || k >= W * H) continue;
+            if (gray[k] < lo) touchesInk = true;   // antialiased rim of a stroke, not a dot
+            if (seen[k] || !inBand(gray[k])) continue;
+            seen[k] = 1;
+            if (over) continue;          // stop growing, we already know it's not a dot
+            if (top < stack.length) stack[top++] = k;
+          }
+        }
+        // shape: a dot is compact (fills its bbox, not elongated); stroke rims and
+        // slivers aren't. Dots can be only ~2px at working scale, so no hard
+        // minimum-side requirement — elongation + fill do the work.
+        const bw = maxx - minx + 1, bh = maxy - miny + 1;
+        const compact = Math.max(bw, bh) <= 3 * Math.min(bw, bh) && n2 >= 0.45 * bw * bh;
+        if (!over && !touchesInk && n2 >= 2 && compact) {
+          cx.push(sx / n2); cy.push(sy / n2);
+        }
+      }
+    }
+    const N = cx.length;
+    if (N < 30 || N > 20000) return null;
+    // Pitch from PAIRWISE offsets: histogram Δ along one axis over all
+    // near-colinear dot pairs. A true lattice piles mass at d, 2d, 3d…, while
+    // stroke-fragment contamination spreads flat — so the spacing between
+    // consecutive histogram peaks recovers d even with plenty of junk dots.
+    function axisPitch(main, ortho) {
+      const MAXLAG = 160;
+      const hgm = new Float64Array(MAXLAG);
+      const idx = Array.from({ length: N }, (_, i) => i).sort((a2, b2) => ortho[a2] - ortho[b2]);
+      for (let a2 = 0; a2 < N; a2++) {
+        const i = idx[a2];
+        for (let b2 = a2 + 1; b2 < N; b2++) {
+          const j = idx[b2];
+          if (ortho[j] - ortho[i] > 2.5) break;      // colinear band only
+          const dm = Math.abs(main[j] - main[i]);
+          if (dm >= 5 && dm < MAXLAG) hgm[Math.round(dm)]++;
+        }
+      }
+      const sm = smooth(hgm, 1);
+      // Comb scoring: the true pitch has mass at d, 2d, 3d… simultaneously —
+      // junk lags can spike one bin but can't sustain a comb. Score = mean peak
+      // mass across the comb teeth; d/2 of the truth dilutes itself on the empty
+      // odd teeth, so the comb also self-resolves the half-pitch ambiguity.
+      function combScore(d) {
+        let s = 0, cnt = 0;
+        for (let k = 1; k * d < MAXLAG; k++) { s += maxInWin(sm, k * d, 2); cnt++; }
+        return cnt >= 3 ? s / cnt : 0;
+      }
+      let bestD = 0, bestS = 0;
+      for (let d = 10; d <= 80; d++) {
+        const s2 = combScore(d);
+        if (s2 > bestS) { bestS = s2; bestD = d; }
+      }
+      if (!bestD) return null;
+      // significance: the comb must beat the histogram's typical level clearly
+      // (baseline excludes the tiny lags where fragment junk piles up)
+      let mean = 0; for (let i = 10; i < MAXLAG; i++) mean += sm[i];
+      mean /= (MAXLAG - 10);
+      if (bestS < 1.8 * mean) return null;
+      return { d: bestD, score: +(bestS / (mean || 1)).toFixed(2) };
+    }
+    const px = axisPitch(cx, cy), py = axisPitch(cy, cx);
+    // one clean axis is enough (hatching often buries the other); two must agree
+    let d = null, score = 0;
+    if (px && py) {
+      if (Math.abs(px.d - py.d) <= 0.15 * Math.max(px.d, py.d)) { d = (px.d + py.d) / 2; score = Math.min(px.score, py.score); }
+      else { const b = px.score >= py.score ? px : py; d = b.d; score = b.score * 0.7; }
+    } else if (px || py) { const b = px || py; d = b.d; score = b.score * 0.8; }
+    if (!d || d < 8 || score < 1.8) return null;
+    return { d, n: N, score: +score.toFixed(2) };
+  }
+
   // {gap, reg, peaks}: robust median line spacing + how many gaps match it (±20%)
   function gapStats(peaks) {
     if (peaks.length < 3) return null;
@@ -141,7 +284,7 @@
     opts = opts || {};
     const lo = Math.max(14, Math.round(Math.min(W, H) / 60));
     const maxSize = Math.round(Math.min(W, H) / 4);
-    const thr = (window.DS && DS.otsu) ? DS.otsu(gray) : 128;
+    const thr = inkThreshold(gray);
     // L ≈ min/26 keeps runs of roughly a cell or more; maxRun ≈ min/2 drops page-border
     // bars (full-dimension runs) that would otherwise saturate the profile. FR keeps
     // only tall (wall) peaks.
@@ -211,6 +354,17 @@
     if (big <= 1.15 * small) s = Math.round((a + b) / 2);
     else if (ax.halved || ay.halved) s = small;
     else s = (ax.reg >= ay.reg) ? a : b;
+
+    // Dot-lattice prior: bro rules his cells ON the printed dots — on every real
+    // map the drawn cell pitch IS the dot pitch (verified per map on zoomed
+    // overlays; the tempting "he subdivides the dots" readings were all optical
+    // illusions at low zoom). So a confident dot lattice simply wins: it is
+    // direct physical evidence, independent of ink density, hatching, or how the
+    // half-pitch heuristics happen to land. Dotless paper (plain/graph/synthetic)
+    // → dots=null → line-profile behaviour unchanged.
+    const dots = dotPitch(gray, W, H);
+    let dotSnap = false;
+    if (dots && dots.d >= 12 && dots.d <= maxSize) { s = Math.round(dots.d); dotSnap = true; }
     s = Math.max(12, Math.min(maxSize, s));
 
     const ox = originAt(cS, s, FR);
@@ -244,16 +398,19 @@
     const midFrac = (scX.midScore / (scX.onScore || 1) + scY.midScore / (scY.onScore || 1)) / 2;
     if (!(ax.halved || ay.halved) && midFrac >= 0.4 && midFrac <= 0.55)
       confidence = Math.min(confidence, 0.6);
+    // a dot-lattice match is physical corroboration — worth more than projection shape
+    if (dotSnap) confidence = Math.max(confidence, Math.min(1, confidence + 0.2, 0.85));
 
     return {
       s, ox, oy, C, R, confidence, confident: confidence >= 0.5,
       dbg: { sX: ax.s, sY: ay.s, halved: [ax.halved, ay.halved],
              onScore: [scX.onScore, scY.onScore], midScore: [scX.midScore, scY.midScore],
              prom: [ax.prom, ay.prom], halfRatio: [ax.halfRatio, ay.halfRatio],
-             midRatio: [ax.midRatio, ay.midRatio], midFrac, reg: [rc, rr] }
+             midRatio: [ax.midRatio, ay.midRatio], midFrac, reg: [rc, rr],
+             dotPitch: dots ? +dots.d.toFixed(1) : null, dotN: dots ? dots.n : 0, dotSnap }
     };
   }
 
   window.DS = window.DS || {};
-  Object.assign(window.DS, { estimateGrid, projections });
+  Object.assign(window.DS, { estimateGrid, projections, dotPitch });
 })();

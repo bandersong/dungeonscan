@@ -25,9 +25,18 @@ between 20px and 98px.
 1. **Auto perspective-rectify first.** Detect the page/grid quad and de-warp so
    the grid is axis-aligned and pitch is constant. Biggest single lever; angled
    photos are bro's norm.
+   → **DONE 2026-07-16**: `DS.perspective.autoRectify` (gated) runs on import.
 2. **Grid by line-detection + local snap** (not global autocorrelation): find the
    actual ruled-line positions, cluster them, snap a possibly-slightly-irregular
    grid. Robust to non-uniform hand squares.
+   → **Superseded by the dot-lattice prior (2026-07-16)**: bro rules his cells ON
+   the printed dots — on all 5 maps the drawn cell pitch equals the dot pitch
+   (verified on zoomed overlays; low-zoom eyeballs mis-read pitch by 2× in both
+   directions, repeatedly). `estimateGrid` detects the dot lattice (gray-band
+   compact blobs → pairwise-Δ comb) and snaps the pitch to it; plus an
+   imbalance-robust ink threshold (post-rectify histograms break Otsu).
+   Regression gates: `node tools/realgate.js` (headless, frozen expectations
+   28/48/41/45/40) and `renderer/harness-real.html` (browser twin) — both 5/5.
 3. **Build a labeled set** from these maps using the (improved) app: digitize →
    hand-correct → save `.dungeonscan`. That yields real (image, grid, walls,
    floor, doors) truth = thousands of labeled cells/edges from 5 maps.

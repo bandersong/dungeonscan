@@ -54,6 +54,12 @@ Mac at `~/DungeonScan`; I stage edits on the laptop and rsync.
 - [x] Swift shell BUILT + LAUNCHES: xcodegen project, WKWebView, NativeBridge (Vision OCR + CoreML classify) — shim matches bridge.js; WebContent process live, no CSP/JS errors
 - [x] real UI: import → **auto-deskew** → lock grid → read → CORRECT (walls/floor/doors) → export PNG + .dd2vtt
 - [x] auto-deskew PROVEN: exact angle recovery ±0.0°, identical digitize results -4°..+7° (real phone photos handled)
+- [x] REAL-MAP GRID SOLVED (2026-07-16): auto perspective-rectify on import (datasets/README step 1)
+      + dot-lattice pitch prior (his cell pitch = the printed dot pitch on EVERY real map, zoom-verified)
+      + imbalance-robust ink threshold (Otsu collapses after rectify crops the dark desk away).
+      Gate: 5/5 real maps at zoom-verified pitch (`node tools/realgate.js`, renderer/harness-real.html)
+      AND synthetic auto-lock 4/4 (was 3/4), wall F1 99.1% unchanged. Old commit-message pitches mixed
+      scales and were never zoom-checked — treat only the frozen gate expectations as truth.
 - [x] real UI integrated into native app bundle (Web/), rebuilt, running
 - [x] VTT portal rotation fixed to radians (Foundry convention)
 - [~] CoreML glyph classifier (GLM training: 5940 crops done, CreateML training running)

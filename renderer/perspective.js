@@ -323,6 +323,40 @@
     return s / 2;
   }
 
+  // ---------- auto-rectify (page-quad de-warp, gated) ----------
+  // One-shot import step: detect the page quad and perspective-correct when —
+  // and only when — the photo is meaningfully keystoned. An angled phone photo
+  // makes the cell pitch VARY across the page, which breaks any global grid
+  // estimate (see datasets/README.md); de-warping first makes pitch constant.
+  // Gates (all must pass, otherwise the original canvas is returned untouched):
+  //   found    — autoDetectPage returned a real quad, not its full-frame fallback
+  //   area     — quad covers 35–99.5% of the frame (a plausible page)
+  //   keystone — corners deviate ≥1.2% of the page size from an axis-aligned
+  //              rect (a straight scan is never resampled)
+  function autoRectify(srcCanvas) {
+    const w = srcCanvas.width, h = srcCanvas.height;
+    const quad = autoDetectPage(srcCanvas);
+    const eps = 0.005 * Math.max(w, h);
+    const isFull = Math.hypot(quad[0].x, quad[0].y) < eps
+      && Math.hypot(quad[1].x - w, quad[1].y) < eps
+      && Math.hypot(quad[2].x - w, quad[2].y - h) < eps
+      && Math.hypot(quad[3].x, quad[3].y - h) < eps;
+    if (isFull) return { canvas: srcCanvas, applied: false, reason: 'no-page' };
+    const frac = Math.abs(signedArea(quad)) / (w * h);
+    if (frac < 0.35 || frac > 0.995) return { canvas: srcCanvas, applied: false, reason: 'area', frac };
+    const xs = quad.map((p) => p.x), ys = quad.map((p) => p.y);
+    const bx0 = Math.min.apply(null, xs), bx1 = Math.max.apply(null, xs);
+    const by0 = Math.min.apply(null, ys), by1 = Math.max.apply(null, ys);
+    const rect = [{ x: bx0, y: by0 }, { x: bx1, y: by0 }, { x: bx1, y: by1 }, { x: bx0, y: by1 }];
+    let dev = 0;
+    for (let i = 0; i < 4; i++) dev = Math.max(dev, Math.hypot(quad[i].x - rect[i].x, quad[i].y - rect[i].y));
+    const rel = dev / Math.max(bx1 - bx0, by1 - by0);
+    if (rel < 0.012) return { canvas: srcCanvas, applied: false, reason: 'already-straight', rel };
+    const out = correct(srcCanvas, quad);
+    if (out.width < 64 || out.height < 64) return { canvas: srcCanvas, applied: false, reason: 'degenerate' };
+    return { canvas: out, applied: true, quad, rel, frac, reason: 'ok' };
+  }
+
   window.DS = window.DS || {};
-  window.DS.perspective = { correct, autoDetectPage, solveHomography };
+  window.DS.perspective = { correct, autoDetectPage, autoRectify, solveHomography };
 })();
