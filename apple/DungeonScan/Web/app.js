@@ -654,6 +654,11 @@
     // in-cell symbols via CoreML classifier
     if (caps.classify) {
       const cands = candidateCells(gray);
+      // Hatched/textured maps put ink in EVERY floor cell — the classifier then
+      // labels hundreds of plain floor cells as "features" (472 on bro-03).
+      // A real symbol map marks a minority of cells; past that, it's texture.
+      const floorCells = S.floor.reduce((a, b) => a + b, 0);
+      if (floorCells && cands.length > floorCells * 0.25) cands.length = 0;
       if (cands.length) {
         const crops = cands.map((c) => cropCell(c.col, c.row));
         const labels = await DSBridge.classify(crops, 'DungeonCellClassifier');
