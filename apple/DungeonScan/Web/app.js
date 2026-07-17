@@ -122,7 +122,8 @@
     unlock(2); unlock(3); relock(4); relock(5);
     maybeCoach();
     updateUndoRedoButtons();
-    setStatus(name ? `Loaded ${name}. Now line up the grid.` : 'Loaded. Now line up the grid.');
+    const straightened = S.autoRect ? ' Auto-straightened the page — use the corners tool if it looks off.' : '';
+    setStatus((name ? `Loaded ${name}.` : 'Loaded.') + straightened + ' Now line up the grid.');
     fitView(); render();
   }
   // The size the canvas would be at zoom 1 (fully fit inside the stage box).
