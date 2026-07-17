@@ -341,10 +341,14 @@
   //  Compatible with Foundry v10–v12 scene schema.
 
   function foundryWall(p1, p2, ppg, door, open) {
+    // No light/sight/sound/move keys: the old explicit 0 meant
+    // WALL_SENSE_TYPES.NONE — walls that block nothing (tokens, vision and
+    // light pass straight through). Omitting the keys lets Foundry's schema
+    // default (NORMAL, blocking) apply at Scene.create(), which is exactly
+    // what the dd-import module relies on for its own walls.
     return {
       c: [Math.round(p1.x * ppg), Math.round(p1.y * ppg),
           Math.round(p2.x * ppg), Math.round(p2.y * ppg)],
-      light: 0, sight: 0, sound: 0, move: 0,
       dir: 0,
       door: door || 0,
       ds: open ? 1 : 0
@@ -393,7 +397,7 @@
       grid: {
         size: ppg,
         type: 1,                 // 1 = square grid
-        distance: 1,
+        distance: 5,             // 5 ft per square (D&D standard) — 1 made every ruler/template read 5x short
         units: 'ft',
         alpha: 0.2,
         color: '#000000'
