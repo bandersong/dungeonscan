@@ -62,13 +62,34 @@ Mac at `~/DungeonScan`; I stage edits on the laptop and rsync.
       scales and were never zoom-checked — treat only the frozen gate expectations as truth.
 - [x] real UI integrated into native app bundle (Web/), rebuilt, running
 - [x] VTT portal rotation fixed to radians (Foundry convention)
-- [~] CoreML glyph classifier (GLM training: 5940 crops done, CreateML training running)
-- [~] DevID + MAS build/sign/notarize scripts + README + MAS checklist (GLM running)
-- [ ] integrate trained model into bundle + rebuild
-- [ ] final signed+notarized DevID build (needs GUI keychain → one script at the Mac) + MAS provisioning
-- [ ] Vision OCR room numbers (wired in app.js enrich(), needs model/native to verify)
-- [ ] Vision OCR CLI
-- [ ] synthetic dataset + CoreML classifier
-- [ ] correction UI
-- [ ] export + beautify
-- [ ] MAS + DevID builds, sign, notarize, verify, launch-test
+- [x] CoreML glyph classifier — **two models trained + shipped**:
+      `DungeonCellClassifier` (cell symbols: door/stairs/water/…) and
+      `TerrainClassifier`. Sources in `models/`, training pipeline in
+      `training/` (`gen_*.py`, `train.swift`, `verify_*.py`). Bundled as
+      compiled `.mlmodelc` resources.
+- [x] DevID + MAS + iOS build/sign/notarize scripts written —
+      `apple/build_devid.sh`, `apple/build_mas.sh`, `apple/build_ios.sh`.
+      README + `MAS_CHECKLIST.md` cover the manual portal steps.
+- [x] trained model integrated into the bundle + rebuild verified —
+      both `.mlmodelc` + `labels.json` are `resources` in `apple/project.yml`
+      (macOS + iOS targets) and land in `Contents/Resources/`;
+      `NativeBridge.model(named:)` loads them by name.
+- [x] Vision OCR room numbers — `VNRecognizeTextRequest` in
+      `NativeBridge.ocr` + wired into `app.js enrich()` (reads numbers when
+      `caps.ocr` is true). Capabilities flag reported in the UI badge.
+- [x] synthetic dataset + CoreML classifier — generator + trainer + verifier
+      pipeline all present (`training/gen_glyphs.py`, `train.swift`,
+      `verify_cells*.py`, `export_coreml.py`).
+- [x] correction UI — paint walls/floor, drop + rotate doors, fix
+      stairs/numbers, edit everything (`renderer/app.js`).
+- [x] export + beautify — `renderer/export.js` (PNG/JPEG/WebP/PDF +
+      tiled-print PDF), `renderer/vtt.js` (`.dd2vtt`), `renderer/beautify.js`
+      (parchment print pass = old MapSmith engine).
+- [ ] Vision OCR CLI — a standalone Swift CLI that runs the same
+      `VNRecognizeTextRequest` on a file (for batch/scripted use). Not yet
+      written; the in-app bridge covers interactive use.
+- [ ] final signed+notarized DevID build + MAS upload — **needs the Mac's
+      GUI keychain** (signing identities unlock only in an interactive
+      Terminal session, not over ssh). Run `apple/build_devid.sh` and
+      `apple/build_mas.sh` on the Mac, then the MAS steps in
+      `MAS_CHECKLIST.md`. This is the last manual gate before shipping.
