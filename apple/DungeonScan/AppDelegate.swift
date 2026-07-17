@@ -14,7 +14,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Sparkle auto-updater (Developer ID build). Starts the updater, which
         // checks the appcast on its own schedule; the menu adds Check for Updates…
+        // Debug/ad-hoc builds fail Sparkle's signature validation and pop an
+        // "Unable to Check For Updates" dialog at launch — don't start it there.
+        #if !DEBUG
         updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        #endif
         setupMainMenu()
 
         let bridge = NativeBridge()

@@ -236,22 +236,28 @@
   // Instead: a CELL that holds drawn content (grid lines / shading) is room floor;
   // blank paper is void. Walls become the floor/void boundary — the room outline.
 
-  // Mean ink (0..255) inside each cell, inset to skip the grid-line edges.
+  // Mean + std-dev of ink (0..255) inside each cell, inset to skip the
+  // grid-line edges. sd separates drawn texture (high) from smooth shading
+  // and vignette (near-zero) — mean alone cannot (measured on bro-03:
+  // phantom-cell mean ≈ drawn-cell mean, but sd 2.6 vs 57.8 median).
   function cellInk(gray, W, H, grid) {
     const { s, ox, oy, C, R } = grid;
     const inset = Math.max(2, Math.round(s * 0.24));
     const cm = new Float32Array(C * R);
+    const sd = new Float32Array(C * R);
     for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
       const x0 = ox + c * s + inset, x1 = ox + (c + 1) * s - inset;
       const y0 = oy + r * s + inset, y1 = oy + (r + 1) * s - inset;
-      let sum = 0, n = 0;
+      let sum = 0, sum2 = 0, n = 0;
       for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) {
         if (x < 0 || y < 0 || x >= W || y >= H) continue;
-        sum += 255 - gray[y * W + x]; n++;
+        const v = 255 - gray[y * W + x]; sum += v; sum2 += v * v; n++;
       }
-      cm[r * C + c] = n ? sum / n : 0;
+      const m = n ? sum / n : 0;
+      cm[r * C + c] = m;
+      sd[r * C + c] = n ? Math.sqrt(Math.max(0, sum2 / n - m * m)) : 0;
     }
-    return cm;
+    return { cm, sd };
   }
 
   // Fraction (0..1) of INTERIOR grid edges carrying ink — high ⇒ the grid was
@@ -275,7 +281,7 @@
   function detectFloorByInk(gray, W, H, grid, opts) {
     opts = opts || {};
     const { C, R } = grid;
-    const cm = cellInk(gray, W, H, grid);
+    const { cm, sd } = cellInk(gray, W, H, grid);
     const hist = new Array(256).fill(0);
     for (let i = 0; i < cm.length; i++) hist[Math.min(255, Math.max(0, cm[i] | 0))]++;
     const tot = cm.length; let sumAll = 0; for (let i = 0; i < 256; i++) sumAll += i * hist[i];
@@ -286,8 +292,13 @@
       if (v > best) { best = v; thr = i; }
     }
     thr = Math.max(thr * (opts.floorScale || 0.8), opts.floorMin || 12);
+    // Smooth-shading veto: page-edge vignette lifts a blank cell's MEAN ink past
+    // Otsu, but blank paper is flat (sd ~2-3) while drawn floor is textured
+    // (sd 26+ at the 10th pct on bro-03). Without this, empty dot-paper corners
+    // digitize as phantom rooms.
+    const sdMin = opts.floorSdMin != null ? opts.floorSdMin : 10;
     let floor = new Uint8Array(C * R);
-    for (let i = 0; i < C * R; i++) floor[i] = cm[i] > thr ? 1 : 0;
+    for (let i = 0; i < C * R; i++) floor[i] = (cm[i] > thr && sd[i] > sdMin) ? 1 : 0;
     // one cleanup pass: fill a void cell with >=3 floor neighbours; drop a lone floor speck
     const nb = (f, c, r) => (c < 0 || r < 0 || c >= C || r >= R) ? 0 : f[r * C + c];
     const f2 = floor.slice();

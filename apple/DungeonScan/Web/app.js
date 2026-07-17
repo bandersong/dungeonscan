@@ -15,8 +15,9 @@
     walls: null, floor: null, doors: [], features: [],
     tool: 'wall', style: 'stone', ppg: 80, notes: '',
     history: [], redo: [], step: 1, dragVal: null,
-    // map look
-    floorTexture: 'flat', wallStyle: 'solid',
+    // map look — stonetile default: flat floor reads as unfinished next to the
+    // void; tiled stone is the classic battle-map look (theme QA 2026-07-17)
+    floorTexture: 'stonetile', wallStyle: 'solid',
     // read tuning
     lineSensitivity: 0.5, invertPaper: false,
     // "grid drawn" style (mapper inked every square): floor from cell ink, not edges.
@@ -654,6 +655,11 @@
     // in-cell symbols via CoreML classifier
     if (caps.classify) {
       const cands = candidateCells(gray);
+      // Hatched/textured maps put ink in EVERY floor cell — the classifier then
+      // labels hundreds of plain floor cells as "features" (472 on bro-03).
+      // A real symbol map marks a minority of cells; past that, it's texture.
+      const floorCells = S.floor.reduce((a, b) => a + b, 0);
+      if (floorCells && cands.length > floorCells * 0.25) cands.length = 0;
       if (cands.length) {
         const crops = cands.map((c) => cropCell(c.col, c.row));
         const labels = await DSBridge.classify(crops, 'DungeonCellClassifier');
