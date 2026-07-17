@@ -137,8 +137,8 @@ func usage() -> String {
     DungeonScan OCR — VNRecognizeTextRequest on a dungeon image.
 
     Usage:
-      swift tools/ocr.swift <image-path> [--quiet]
-      swift tools/ocr.swift --help
+      swift tools/main.swift <image-path> [--quiet]
+      swift tools/main.swift --help
 
     Output: JSON array of {text, confidence, box:{x,y,w,h}} to stdout.
     Box coords are normalized 0..1, top-left origin (Vision's bottom-left
