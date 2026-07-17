@@ -57,3 +57,8 @@ frikistein's graph paper); Dyson's faint freehand grid under heavy hatching
 and Wistedt's every-other-dot cells defeat it. The pitch problem needs the
 grid-line evidence itself to resolve ×2 — likely the same geometric
 stroke/ridge work as the pale-stroke frontier (datasets/README.md §2b).
+
+## Probed and falsified (2026-07-17, same session)
+- **Paper-run-width comb** (corridor=1 cell → gap histogram): FAILS on every
+  hatched map — hatch-stroke spacing (8-10px) floods the run statistics; only
+  unhatched bro-01 matched (30 vs 28). Don't retry without hatch suppression.
