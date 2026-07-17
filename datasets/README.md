@@ -25,9 +25,28 @@ between 20px and 98px.
 1. **Auto perspective-rectify first.** Detect the page/grid quad and de-warp so
    the grid is axis-aligned and pitch is constant. Biggest single lever; angled
    photos are bro's norm.
+   → **DONE 2026-07-16**: `DS.perspective.autoRectify` (gated) runs on import.
 2. **Grid by line-detection + local snap** (not global autocorrelation): find the
    actual ruled-line positions, cluster them, snap a possibly-slightly-irregular
    grid. Robust to non-uniform hand squares.
+   → **Superseded by the dot-lattice prior (2026-07-16)**: bro rules his cells ON
+   the printed dots — on all 5 maps the drawn cell pitch equals the dot pitch
+   (verified on zoomed overlays; low-zoom eyeballs mis-read pitch by 2× in both
+   directions, repeatedly). `estimateGrid` detects the dot lattice (gray-band
+   compact blobs → pairwise-Δ comb) and snaps the pitch to it; plus an
+   imbalance-robust ink threshold (post-rectify histograms break Otsu).
+   Regression gates: `node tools/realgate.js` (headless, frozen expectations
+   28/48/41/45/40) and `renderer/harness-real.html` (browser twin) — both 5/5.
+2b. **Open: pale-stroke recall on sparse thin-pen maps (bro-01).** Wall read at
+   2026-07-16 close: 29 enclosed cells vs ~250 drawn — his palest strokes sit
+   ~10-15 gray levels under paper, the SAME local darkness as photo/paper
+   texture. Threshold + continuity tuning was tried and REVERTED (delta 10 +
+   followed-run rescue lanes recovered pale strokes but dropped synthetic wall
+   F1 99.1→93.7 — texture chains just like a pale line). The separator has to
+   be GEOMETRY, not darkness: a pen stroke is a curvilinear ridge with a
+   consistent direction; texture is isotropic. Next attempt = ridge/stroke
+   tracing (skeletonize locally-dark ink → polylines → snap to lattice edges),
+   gated by `tools/realgate.js` + labeled bro-01 wall truth.
 3. **Build a labeled set** from these maps using the (improved) app: digitize →
    hand-correct → save `.dungeonscan`. That yields real (image, grid, walls,
    floor, doors) truth = thousands of labeled cells/edges from 5 maps.

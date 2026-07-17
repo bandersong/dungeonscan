@@ -1,0 +1,158 @@
+<meta charset="utf-8" />
+<title>DungeonScan — real-map gate</title>
+<style>
+  body { background:#14181f; color:#e8e2d2; font-family:-apple-system,system-ui,sans-serif; margin:0; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; } .sub{color:#8fa0ad;font-size:13px;margin-bottom:14px;}
+  .agg { background:#1c232c; border:1px solid #2c3742; border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:14px; }
+  .agg b { color:#7fd18c; } .bad{color:#e08a8a;} .ok{color:#7fd18c;}
+  .row { display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-bottom:16px; }
+  .cell { background:#1c232c; border:1px solid #2c3742; border-radius:10px; padding:8px; }
+  .cell h3 { margin:0 0 6px; font-size:12px; color:#a9b7c2; font-weight:600; }
+  canvas { width:100%; height:auto; display:block; border-radius:6px; background:#0e1116; }
+  .metrics { font-size:11.5px; color:#9fb0bc; margin-top:5px; line-height:1.45; }
+  .metrics b{color:#e8e2d2;}
+</style>
+<h1>DungeonScan — real-map regression gate</h1>
+<div class="sub">bro-01..05 photos → the EXACT app pipeline (scale→MAXDIM, autoRectify, smartDeskew,
+estimateGrid, detectWalls, gridDrawn branch, floor, doors, render, VTT). Pitch gate:
+|detected − expected| ≤ 2px, expectations zoom-verified 2026-07-16 (= printed dot pitch on every map).
+Headless twin: <code>node tools/realgate.js</code>.</div>
+<div id="agg" class="agg">running…</div>
+<div id="grid"></div>
+
+<script src="digitize.js?v=1784255012"></script>
+<script src="perspective.js?v=1784255012"></script>
+<script src="grid.js?v=1784255012"></script>
+<script src="rectify.js?v=1784255012"></script>
+<script src="vtt.js?v=1784255012"></script>
+<script src="render.js?v=1784255012"></script>
+<script>
+// Expected cell pitch (px, post-rectify at MAXDIM=1600), verified on ZOOMED
+// lattice overlays 2026-07-16: on every map the drawn cell pitch equals the
+// printed dot pitch. (The older commit-message pitches mixed scales and were
+// never zoom-checked — low-zoom eyeballs mis-read pitch by 2× in both
+// directions. Re-verify at zoom before changing these.)
+const MAPS = [
+  { name: 'bro-01', exp: 28 },
+  { name: 'bro-02', exp: 48 },
+  { name: 'bro-03', exp: 41 },
+  { name: 'bro-04', exp: 45 },
+  { name: 'bro-05', exp: 40 },
+];
+const MAXDIM = 1600, TOL = 2;
+
+function loadImg(src) {
+  return new Promise((res, rej) => {
+    const im = new Image();
+    im.onload = () => res(im);
+    im.onerror = () => rej(new Error('load failed: ' + src));
+    im.src = src;
+  });
+}
+function show(parent, title, canvas) {
+  const d = document.createElement('div'); d.className = 'cell';
+  const h = document.createElement('h3'); h.textContent = title;
+  d.appendChild(h); d.appendChild(canvas); parent.appendChild(d); return d;
+}
+// photo + detected grid lattice (green) — the same visual check he does by hand
+function gridOverlay(work, est) {
+  const cv = document.createElement('canvas'); cv.width = work.width; cv.height = work.height;
+  const x = cv.getContext('2d'); x.drawImage(work, 0, 0);
+  x.strokeStyle = 'rgba(70,220,110,0.75)'; x.lineWidth = Math.max(1.5, est.s * 0.03);
+  for (let c = 0; c <= est.C; c++) { const X = est.ox + c * est.s; x.beginPath(); x.moveTo(X, est.oy); x.lineTo(X, est.oy + est.R * est.s); x.stroke(); }
+  for (let r = 0; r <= est.R; r++) { const Y = est.oy + r * est.s; x.beginPath(); x.moveTo(est.ox, Y); x.lineTo(est.ox + est.C * est.s, Y); x.stroke(); }
+  return cv;
+}
+// detected walls (red) + floor (blue wash) over the photo — digitize sanity
+function wallOverlay(work, grid, walls, floor) {
+  const cv = document.createElement('canvas'); cv.width = work.width; cv.height = work.height;
+  const x = cv.getContext('2d'); x.drawImage(work, 0, 0);
+  const { s, ox, oy, C, R } = grid;
+  x.fillStyle = 'rgba(90,150,235,0.25)';
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++)
+    if (floor[r * C + c]) x.fillRect(ox + c * s, oy + r * s, s, s);
+  x.strokeStyle = 'rgba(235,90,90,0.9)'; x.lineWidth = Math.max(2, s * 0.10); x.lineCap = 'round';
+  for (let r = 0; r < R; r++) for (let c = 0; c <= C; c++)
+    if (walls.vEdge[r][c]) { const X = ox + c * s; x.beginPath(); x.moveTo(X, oy + r * s); x.lineTo(X, oy + (r + 1) * s); x.stroke(); }
+  for (let r = 0; r <= R; r++) for (let c = 0; c < C; c++)
+    if (walls.hEdge[r][c]) { const Y = oy + r * s; x.beginPath(); x.moveTo(ox + c * s, Y); x.lineTo(ox + (c + 1) * s, Y); x.stroke(); }
+  return cv;
+}
+
+async function run() {
+  const gridEl = document.getElementById('grid');
+  const results = [];
+  for (const m of MAPS) {
+    let row = document.createElement('div'); row.className = 'row';
+    try {
+      const img = await loadImg('../datasets/real-maps/' + m.name + '.jpg');
+      // — the app's exact setupImage path —
+      const scale = Math.min(1, MAXDIM / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+      let work = document.createElement('canvas'); work.width = w; work.height = h;
+      work.getContext('2d').drawImage(img, 0, 0, w, h);
+      const rect = DS.perspective.autoRectify(work); work = rect.canvas;
+      const de = DS.smartDeskew(work); work = de.canvas;
+      const gray = DS.toGray(work.getContext('2d').getImageData(0, 0, work.width, work.height));
+      const est = DS.estimateGrid(gray, work.width, work.height);
+      // pitch stability probe: estimate per quadrant; spread = (max−min)/mean.
+      // Rectification is WORKING when the spread is small (pitch truly global).
+      const qs = [];
+      const qw = work.width >> 1, qh = work.height >> 1;
+      for (const [qx, qy] of [[0, 0], [qw, 0], [0, qh], [qw, qh]]) {
+        const sub = new Float32Array(qw * qh);
+        for (let y = 0; y < qh; y++) for (let x = 0; x < qw; x++)
+          sub[y * qw + x] = gray[(y + qy) * work.width + (x + qx)];
+        qs.push(DS.estimateGrid(sub, qw, qh).s);
+      }
+      const qMean = qs.reduce((a, b) => a + b, 0) / 4;
+      const qSpread = (Math.max.apply(null, qs) - Math.min.apply(null, qs)) / qMean;
+      const pass = Math.abs(est.s - m.exp) <= TOL;
+      // — the app's exact readDungeon path —
+      const grid = { s: est.s, ox: est.ox, oy: est.oy, C: est.C, R: est.R };
+      const edge = DS.detectWalls(gray, work.width, work.height, grid);
+      const gridDrawn = DS.gridDrawnScore(edge) > 0.5;
+      let walls, floor;
+      if (gridDrawn) { const cf = DS.detectFloorByInk(gray, work.width, work.height, grid); walls = cf.walls; floor = cf.floor; }
+      else { walls = edge; floor = DS.detectFloor(edge); }
+      const doors = DS.detectDoorways(walls, floor);
+      const clean = DS.renderBattleMap({ walls, floor, doors, C: grid.C, R: grid.R, ppg: 64 });
+      const uvtt = DS.buildUVTT({ walls, doors, pixelsPerGrid: 64, imageBase64: clean.toDataURL('image/png').split(',')[1] });
+      const val = DS.validateUVTT(uvtt);
+      const d = est.dbg || {};
+      results.push({ name: m.name, exp: m.exp, s: est.s, pass, conf: est.confidence,
+                     angle: de.angle, gridDrawn, vttOk: !!val.ok, dbg: d,
+                     rectified: rect.applied, rectReason: rect.reason, quadPitches: qs, qSpread });
+
+      show(row, m.name + ' — photo + detected grid', gridOverlay(work, est));
+      show(row, 'walls + floor read', wallOverlay(work, grid, walls, floor));
+      const cell = show(row, 'clean battle map', clean);
+      const info = document.createElement('div'); info.className = 'metrics';
+      info.innerHTML =
+        `pitch <b>${est.s}px</b> vs expected <b>${m.exp}px</b> → ${pass ? '<b class=ok>PASS</b>' : '<span class=bad>FAIL</span>'}`
+        + ` · conf ${est.confidence.toFixed(2)} · deskew ${de.angle.toFixed(1)}°${gridDrawn ? ' · grid-drawn' : ''}<br>`
+        + `rectify ${rect.applied ? '<b class=ok>applied</b>' : 'skipped (' + rect.reason + ')'}`
+        + ` · quadrant pitches [${qs.join(',')}] spread ${(qSpread * 100).toFixed(0)}%<br>`
+        + `axes sX ${d.sX} sY ${d.sY} · halved [${d.halved}] · prom [${(d.prom || []).map(v => v.toFixed(2))}]<br>`
+        + `halfRatio [${(d.halfRatio || []).map(v => v.toFixed(2))}] · midRatio [${(d.midRatio || []).map(v => v.toFixed(2))}] · reg [${(d.reg || []).map(v => v.toFixed(2))}]<br>`
+        + `floor ${floor.reduce((a, b) => a + b, 0)} cells · doors ${doors.length} · VTT ${val.ok ? '<b class=ok>valid</b>' : '<span class=bad>' + val.errors + '</span>'}`;
+      cell.appendChild(info);
+    } catch (e) {
+      results.push({ name: m.name, error: String(e) });
+      const errCell = show(row, m.name, document.createElement('canvas'));
+      const info = document.createElement('div'); info.className = 'metrics';
+      info.innerHTML = '<span class=bad>' + String(e) + '</span>'; errCell.appendChild(info);
+    }
+    gridEl.appendChild(row);
+  }
+  const passN = results.filter(r => r.pass).length;
+  const vttN = results.filter(r => r.vttOk).length;
+  document.getElementById('agg').innerHTML =
+    `<b>Pitch gate ${passN}/${MAPS.length}</b> · VTT valid ${vttN}/${MAPS.length} · ` +
+    results.map(r => `${r.name} ${r.error ? '<span class=bad>ERR</span>' : (r.pass ? '<b class=ok>' : '<span class=bad>') + r.s + 'px' + (r.pass ? '</b>' : '</span>')}`).join(' · ');
+  document.title = `real gate ${passN}/${MAPS.length}`;
+  window.__GATE__ = { done: true, pass: passN, total: MAPS.length, results };
+}
+window.__GATE__ = { done: false };
+run();
+</script>

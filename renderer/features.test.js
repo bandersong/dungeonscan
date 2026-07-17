@@ -171,21 +171,23 @@ _create = (t) => makeRecordCanvas(1, 1);   // render.js uses the recording ctx
 
   function gridStrokes(canvas) {
     const log = canvas._log || [];
-    // drawGrid sets strokeStyle = gridStyle before each stroke; capture that
+    // drawGrid strokes a contrasting halo + a core line; the core carries the
+    // resolved grid colour's rgb triple (alpha is boosted for legibility), so
+    // match on the triple rather than the exact rgba string.
     return log.filter((e) => e.op === 'stroke').map((e) => e.strokeStyle);
   }
 
   const on = window.DS.renderBattleMap(Object.assign({}, base));
-  const onGrid = gridStrokes(on).filter((s) => s === 'rgba(60,50,30,0.20)');
+  const onGrid = gridStrokes(on).filter((s) => String(s).includes('52,42,24')); // stone palette grid rgb
   assert(on.width === C * ppg && on.height === R * ppg, `canvas sized ${C * ppg}×${R * ppg}`);
   assert(onGrid.length > 0, 'default (grid on) strokes the grid');
 
   const off = window.DS.renderBattleMap(Object.assign({}, base, { showGrid: false }));
-  const offGrid = gridStrokes(off).filter((s) => s === 'rgba(60,50,30,0.20)');
+  const offGrid = gridStrokes(off).filter((s) => String(s).includes('52,42,24'));
   assert(offGrid.length === 0, 'showGrid:false skips the grid pass entirely');
 
   const custom = window.DS.renderBattleMap(Object.assign({}, base, { gridColor: '#112233', gridOpacity: 0.4 }));
-  const customGrid = gridStrokes(custom).filter((s) => s === 'rgba(17,34,51,0.4)');
+  const customGrid = gridStrokes(custom).filter((s) => String(s).includes('17,34,51'));
   assert(customGrid.length > 0, 'custom gridColor+opacity is the style actually stroked');
 }
 

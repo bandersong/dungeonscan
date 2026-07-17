@@ -205,6 +205,51 @@ console.log('\n[C] autoDetectPage — clean page on dark background');
   assert(maxErr < 12, `page quad within 12px of truth (max ${maxErr.toFixed(1)}px)`);
 }
 
+// --------------------------- D. autoRectify ---------------------------
+console.log('\n[D] autoRectify — gated one-shot de-warp');
+{
+  const { autoRectify } = window.DS.perspective;
+  const W = 300, H = 300;
+  const D = [{ x: 0, y: 0 }, { x: W, y: 0 }, { x: W, y: H }, { x: 0, y: H }];
+  const Q = [{ x: 60, y: 40 }, { x: 440, y: 20 }, { x: 480, y: 360 }, { x: 40, y: 380 }];
+  const Hb = solveHomography(Q, D);
+
+  // white page with guide lines, photographed keystoned on a DARK desk
+  const origCv = makeCanvas(W, H); origCv.getContext().fillRect();
+  const orig = origCv._img;
+  for (const k of [60, 150, 240]) {
+    for (let y = 0; y < H; y++) { setPx(orig, W, k, y, 0, 0, 0); setPx(orig, W, k + 1, y, 0, 0, 0); }
+    for (let x = 0; x < W; x++) { setPx(orig, W, x, k, 0, 0, 0); setPx(orig, W, x, k + 1, 0, 0, 0); }
+  }
+  const PW = 520, PH = 420;
+  const photoCv = makeCanvas(PW, PH); const photo = photoCv._img.data;
+  for (let y = 0; y < PH; y++) for (let x = 0; x < PW; x++) {
+    const p = applyH(Hb, x, y); const i = (y * PW + x) * 4;
+    if (p.x < 0 || p.y < 0 || p.x > W - 1 || p.y > H - 1) { // dark desk outside the page
+      photo[i] = 25; photo[i + 1] = 25; photo[i + 2] = 25; photo[i + 3] = 255; continue;
+    }
+    const c = sampleOrig(orig, p.x, p.y);
+    photo[i] = c[0]; photo[i + 1] = c[1]; photo[i + 2] = c[2]; photo[i + 3] = 255;
+  }
+  const r1 = autoRectify(photoCv);
+  assert(r1.applied === true, `keystoned page → applied (reason ${r1.reason}, rel ${r1.rel && r1.rel.toFixed(3)})`);
+  assert(r1.applied && r1.canvas.width > 64 && r1.canvas.height > 64, 'corrected canvas has sane dimensions');
+
+  // straight page on a dark desk → detected but NOT resampled
+  const cv2 = makeCanvas(400, 400); const c2 = cv2.getContext();
+  c2.fillStyle = '#000'; c2.fillRect();
+  for (let y = 50; y < 350; y++) for (let x = 60; x < 360; x++) setPx(cv2._img, 400, x, y, 255, 255, 255);
+  for (let y = 150; y < 160; y++) for (let x = 150; x < 280; x++) setPx(cv2._img, 400, x, y, 60, 60, 60);
+  const r2 = autoRectify(cv2);
+  assert(r2.applied === false && r2.reason === 'already-straight', `straight page → skipped (${r2.reason})`);
+  assert(r2.canvas === cv2, 'skip returns the ORIGINAL canvas untouched');
+
+  // page fills the whole frame → no border to trace → skipped
+  const cv3 = makeCanvas(400, 400); cv3.getContext().fillRect();
+  const r3 = autoRectify(cv3);
+  assert(r3.applied === false, `full-frame page → skipped (${r3.reason})`);
+}
+
 // --------------------------- summary ---------------------------
 console.log('\n────────────────────────────────────────');
 console.log(`B: worst interior line error = ${maxLineErr.toFixed(2)} px`);

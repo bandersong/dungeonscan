@@ -9,3 +9,7 @@ node_modules/
 training/dataset_terrain/
 training/dataset_terrain_split/
 tools/
+
+# third-party test images fetched locally (see datasets/external/SOURCES.md)
+datasets/external/*
+!datasets/external/SOURCES.md
