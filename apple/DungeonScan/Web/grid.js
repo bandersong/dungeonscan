@@ -255,18 +255,40 @@
       // (baseline excludes the tiny lags where fragment junk piles up)
       let mean = 0; for (let i = 10; i < MAXLAG; i++) mean += sm[i];
       mean /= (MAXLAG - 10);
-      if (bestS < 1.8 * mean) return null;
-      return { d: bestD, score: +(bestS / (mean || 1)).toFixed(2) };
+      return { d: bestD, score: +(bestS / (mean || 1)).toFixed(2), pass: bestS >= 1.8 * mean };
     }
     const px = axisPitch(cx, cy), py = axisPitch(cy, cx);
-    // one clean axis is enough (hatching often buries the other); two must agree
+    // One clean axis is enough (hatching often buries the other). An axis that
+    // fails solo significance still CORROBORATES when its best-fit pitch
+    // independently lands on the passing axis's pitch — two junk histograms
+    // don't agree by accident.
     let d = null, score = 0;
-    if (px && py) {
-      if (Math.abs(px.d - py.d) <= 0.15 * Math.max(px.d, py.d)) { d = (px.d + py.d) / 2; score = Math.min(px.score, py.score); }
+    const agree = px && py && Math.abs(px.d - py.d) <= 0.15 * Math.max(px.d, py.d);
+    if (px && py && px.pass && py.pass) {
+      if (agree) { d = (px.d + py.d) / 2; score = Math.max(px.score, py.score); }
       else { const b = px.score >= py.score ? px : py; d = b.d; score = b.score * 0.7; }
-    } else if (px || py) { const b = px || py; d = b.d; score = b.score * 0.8; }
+    } else if (px && py && (px.pass || py.pass)) {
+      const strong = px.pass ? px : py;
+      if (agree) { d = (px.d + py.d) / 2; score = strong.score; }
+      else { d = strong.d; score = strong.score * 0.8; }
+    } else if ((px && px.pass) || (py && py.pass)) {
+      const b = px && px.pass ? px : py; d = b.d; score = b.score * 0.8;
+    }
     if (!d || d < 8 || score < 1.8) return null;
-    return { d, n: N, score: +score.toFixed(2) };
+    // lattice PHASE from the dot centroids: bro draws his walls through the dots,
+    // so the dots' modular position pins the grid origin far better than the
+    // wobbly ink profiles do. Circular median via the strongest bin of (c mod d).
+    function phaseOf(vals) {
+      const bins = new Float64Array(Math.ceil(d));
+      for (const v of vals) bins[Math.floor(((v % d) + d) % d)]++;
+      let best = 0, bi = 0;
+      for (let i = 0; i < bins.length; i++) {
+        const sc2 = bins[i] + bins[(i + 1) % bins.length] + bins[(i + bins.length - 1) % bins.length];
+        if (sc2 > best) { best = sc2; bi = i; }
+      }
+      return bi;
+    }
+    return { d, n: N, score: +score.toFixed(2), phaseX: phaseOf(cx), phaseY: phaseOf(cy) };
   }
 
   // {gap, reg, peaks}: robust median line spacing + how many gaps match it (±20%)
@@ -367,8 +389,11 @@
     if (dots && dots.d >= 12 && dots.d <= maxSize) { s = Math.round(dots.d); dotSnap = true; }
     s = Math.max(12, Math.min(maxSize, s));
 
-    const ox = originAt(cS, s, FR);
-    const oy = originAt(rS, s, FR);
+    // origin: the dot phase is authoritative when the lattice was detected —
+    // bro draws his walls through the printed dots, and the wobbly ink profiles
+    // routinely land the comb half a cell off, which starves the wall detector.
+    const ox = dotSnap ? dots.phaseX : originAt(cS, s, FR);
+    const oy = dotSnap ? dots.phaseY : originAt(rS, s, FR);
     const C = Math.max(1, Math.floor((W - ox) / s));
     const R = Math.max(1, Math.floor((H - oy) / s));
 

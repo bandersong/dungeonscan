@@ -58,58 +58,97 @@
    * edge line (the band tolerates a hand-drawn wall that isn't dead-on the line).
    * Then Otsu-split the edge scores into wall / not-wall, with an absolute floor
    * so a blank drawing yields no walls.
+   *
+   * A second, independent CONTINUITY veto handles what mean-ink alone cannot:
+   * on real photos a printed dot, page-border shading, or vignette can push an
+   * edge's mean over the threshold without there being a drawn line. A real wall
+   * is locally-dark along MOST of its edge; a dot covers a few px and smooth
+   * shading is never locally dark (integral-image local paper estimate). Edges
+   * whose ink coverage is under covFloor are vetoed. Solid drawn lines pass the
+   * veto trivially, so the proven synthetic behaviour is unchanged.
    */
   function detectWalls(gray, W, H, grid, opts) {
     opts = opts || {};
     const ink = inkField(gray);
     const { s, ox, oy, C, R } = grid;
-    const band = Math.max(1, Math.round(s * (opts.bandFrac || 0.16)));
+    // ±0.22s band: hand-drawn lines wobble well off the ideal lattice line; at
+    // real cell pitches (≥20px) the band still clears the neighbouring edge.
+    const band = Math.max(1, Math.round(s * (opts.bandFrac || 0.22)));
     // shrink each edge slightly at its ends so we sample the wall, not the corner blob
     const pad = Math.max(1, Math.round(s * 0.14));
 
     const at = (x, y) => (x < 0 || y < 0 || x >= W || y >= H) ? 0 : ink[y * W + x];
 
-    // sample mean ink along a segment with a perpendicular band
+    // --- continuity veto machinery (local ink via integral image) ---
+    const delta = Math.max(10, Math.round((opts.minInk != null ? opts.minInk : 40) * 0.5));
+    const win = Math.max(8, Math.round(s));
+    const I = new Float64Array((W + 1) * (H + 1));
+    for (let y = 0; y < H; y++) {
+      let rowSum = 0;
+      const src = y * W, dst = (y + 1) * (W + 1) + 1, prev = y * (W + 1) + 1;
+      for (let x = 0; x < W; x++) {
+        rowSum += gray[src + x];
+        I[dst + x] = I[prev + x] + rowSum;
+      }
+    }
+    function localMean(x, y) {
+      const x0 = Math.max(0, x - win), x1 = Math.min(W - 1, x + win);
+      const y0 = Math.max(0, y - win), y1 = Math.min(H - 1, y + win);
+      const a = I[y0 * (W + 1) + x0], b = I[y0 * (W + 1) + x1 + 1];
+      const c = I[(y1 + 1) * (W + 1) + x0], d = I[(y1 + 1) * (W + 1) + x1 + 1];
+      return (d - b - c + a) / ((x1 - x0 + 1) * (y1 - y0 + 1));
+    }
+    const isInk = (x, y) => (x >= 0 && y >= 0 && x < W && y < H) && gray[y * W + x] < localMean(x, y) - delta;
+
+    // mean band-max ink + fraction of steps whose band holds locally-dark ink
     function scoreSeg(x0, y0, x1, y1) {
       const vertical = (x0 === x1);
-      let sum = 0, cnt = 0;
+      let sum = 0, cnt = 0, hit = 0;
       if (vertical) {
         const xc = x0;
         for (let y = y0 + pad; y <= y1 - pad; y++) {
-          let best = 0;
-          for (let dx = -band; dx <= band; dx++) best = Math.max(best, at(xc + dx, y));
-          sum += best; cnt++;
+          let best = 0, dark = false;
+          for (let dx = -band; dx <= band; dx++) {
+            const v = at(xc + dx, y);
+            if (v > best) best = v;
+            if (!dark && isInk(xc + dx, y)) dark = true;
+          }
+          sum += best; cnt++; if (dark) hit++;
         }
       } else {
         const yc = y0;
         for (let x = x0 + pad; x <= x1 - pad; x++) {
-          let best = 0;
-          for (let dy = -band; dy <= band; dy++) best = Math.max(best, at(x, yc + dy));
-          sum += best; cnt++;
+          let best = 0, dark = false;
+          for (let dy = -band; dy <= band; dy++) {
+            const v = at(x, yc + dy);
+            if (v > best) best = v;
+            if (!dark && isInk(x, yc + dy)) dark = true;
+          }
+          sum += best; cnt++; if (dark) hit++;
         }
       }
-      return cnt ? sum / cnt : 0;
+      return { mean: cnt ? sum / cnt : 0, cov: cnt ? hit / cnt : 0 };
     }
 
     // vEdge[row][col]: col 0..C, row 0..R-1
-    const vScore = [], hScore = [];
+    const vScore = [], hScore = [], vCov = [], hCov = [];
     const vList = [], hList = [];
     for (let row = 0; row < R; row++) {
-      vScore[row] = new Float32Array(C + 1);
+      vScore[row] = new Float32Array(C + 1); vCov[row] = new Float32Array(C + 1);
       for (let col = 0; col <= C; col++) {
         const x = Math.round(ox + col * s);
         const y0 = Math.round(oy + row * s), y1 = Math.round(oy + (row + 1) * s);
         const sc = scoreSeg(x, y0, x, y1);
-        vScore[row][col] = sc; vList.push(sc);
+        vScore[row][col] = sc.mean; vCov[row][col] = sc.cov; vList.push(sc.mean);
       }
     }
     for (let row = 0; row <= R; row++) {
-      hScore[row] = new Float32Array(C);
+      hScore[row] = new Float32Array(C); hCov[row] = new Float32Array(C);
       for (let col = 0; col < C; col++) {
         const y = Math.round(oy + row * s);
         const x0 = Math.round(ox + col * s), x1 = Math.round(ox + (col + 1) * s);
         const sc = scoreSeg(x0, y, x1, y);
-        hScore[row][col] = sc; hList.push(sc);
+        hScore[row][col] = sc.mean; hCov[row][col] = sc.cov; hList.push(sc.mean);
       }
     }
 
@@ -121,14 +160,17 @@
     // if the drawing is high-contrast, bias a touch toward the wall side
     thr = Math.round(thr * (opts.thrScale || 0.92));
 
+    // continuity floor: dots/specks reach ≤~0.15 coverage, drawn lines ≥~0.6
+    const covFloor = opts.covFloor != null ? opts.covFloor : 0.35;
+
     const vEdge = [], hEdge = [];
     for (let row = 0; row < R; row++) {
       vEdge[row] = new Uint8Array(C + 1);
-      for (let col = 0; col <= C; col++) vEdge[row][col] = vScore[row][col] >= thr ? 1 : 0;
+      for (let col = 0; col <= C; col++) vEdge[row][col] = (vScore[row][col] >= thr && vCov[row][col] >= covFloor) ? 1 : 0;
     }
     for (let row = 0; row <= R; row++) {
       hEdge[row] = new Uint8Array(C);
-      for (let col = 0; col < C; col++) hEdge[row][col] = hScore[row][col] >= thr ? 1 : 0;
+      for (let col = 0; col < C; col++) hEdge[row][col] = (hScore[row][col] >= thr && hCov[row][col] >= covFloor) ? 1 : 0;
     }
     return { vEdge, hEdge, vScore, hScore, threshold: thr, C, R };
   }
@@ -141,7 +183,30 @@
    * "outside" (blank paper); cells it cannot reach are enclosed => floor.
    */
   function detectFloor(walls) {
-    const { vEdge, hEdge, C, R } = walls;
+    const { C, R } = walls;
+    // Close doorway gaps before flooding: a hand-drawn room has 1-edge openings
+    // (doors!) that would let the exterior flood straight in and erase the room.
+    // An open edge whose two COLINEAR neighbours are both walls is such a gap —
+    // treat it as solid for enclosure only (detectDoorways still sees the
+    // original open edge and calls it a door).
+    const vEdge = walls.vEdge.map((row) => Uint8Array.from(row));
+    const hEdge = walls.hEdge.map((row) => Uint8Array.from(row));
+    for (let r = 0; r < R; r++) {
+      for (let c = 0; c <= C; c++) {
+        if (vEdge[r][c]) continue;
+        const up = r > 0 ? walls.vEdge[r - 1][c] : 0;
+        const dn = r < R - 1 ? walls.vEdge[r + 1][c] : 0;
+        if (up && dn) vEdge[r][c] = 1;
+      }
+    }
+    for (let r = 0; r <= R; r++) {
+      for (let c = 0; c < C; c++) {
+        if (hEdge[r][c]) continue;
+        const lf = c > 0 ? walls.hEdge[r][c - 1] : 0;
+        const rt = c < C - 1 ? walls.hEdge[r][c + 1] : 0;
+        if (lf && rt) hEdge[r][c] = 1;
+      }
+    }
     const outside = new Uint8Array(C * R); // 1 = reachable from exterior
     const stack = [];
     // seed: any border cell whose border-facing edge is open is reachable;
