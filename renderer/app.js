@@ -15,8 +15,9 @@
     walls: null, floor: null, doors: [], features: [],
     tool: 'wall', style: 'stone', ppg: 80, notes: '',
     history: [], redo: [], step: 1, dragVal: null,
-    // map look
-    floorTexture: 'flat', wallStyle: 'solid',
+    // map look — stonetile default: flat floor reads as unfinished next to the
+    // void; tiled stone is the classic battle-map look (theme QA 2026-07-17)
+    floorTexture: 'stonetile', wallStyle: 'solid',
     // read tuning
     lineSensitivity: 0.5, invertPaper: false,
     // "grid drawn" style (mapper inked every square): floor from cell ink, not edges.
