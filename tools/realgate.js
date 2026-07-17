@@ -231,8 +231,8 @@ function paintLattice(img, est, rgb) {
 }
 
 // --------------------------- pipeline per map ---------------------------
-function runMap(name) {
-  const jpg = path.join(MAPS_DIR, name + '.jpg');
+function runMap(name, srcPath) {
+  const jpg = srcPath || path.join(MAPS_DIR, name + '.jpg');
   const raw = jpegToImageData(jpg, MAXDIM); // sips -Z == app's MAXDIM fit
   const work0 = makeCanvas(raw.width, raw.height);
   work0._img = { width: raw.width, height: raw.height, data: raw.data };
@@ -267,14 +267,23 @@ function runMap(name) {
 
 // --------------------------- main ---------------------------
 fs.mkdirSync(OUT, { recursive: true });
-const which = process.argv[2];
-const names = which ? [which] : Object.keys(EXPECT);
+// --dir <path>: report-mode over every image in a directory (external holdout —
+// no frozen expectations, never fails the gate; used to falsify overfit to bro).
+let names, extDir = null;
+const dirIx = process.argv.indexOf('--dir');
+if (dirIx >= 0) {
+  extDir = path.resolve(process.argv[dirIx + 1]);
+  names = fs.readdirSync(extDir).filter((f) => /\.(jpe?g|png)$/i.test(f)).sort();
+} else {
+  const which = process.argv[2];
+  names = which ? [which] : Object.keys(EXPECT);
+}
 let fails = 0;
 const rows = [];
 for (const n of names) {
   try {
-    const r = runMap(n);
-    const exp = EXPECT[n] && EXPECT[n].exp;
+    const r = runMap(extDir ? n.replace(/\.[^.]+$/, '') : n, extDir ? path.join(extDir, n) : null);
+    const exp = extDir ? null : (EXPECT[n] && EXPECT[n].exp);
     let verdict = 'REPORT';
     if (exp != null) {
       const ok = Math.abs(r.s - exp) <= TOL;
